@@ -65,7 +65,8 @@ export default function NewRequestPage() {
         user.id,
         formData.type,
         formData.title,
-        formData.description
+        formData.description,
+        asDraft
       )
 
       if (!asDraft) {
@@ -104,10 +105,10 @@ export default function NewRequestPage() {
                 <SelectValue placeholder="Select request type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="LEAVE">Leave Request</SelectItem>
-                <SelectItem value="EQUIPMENT">Equipment Request</SelectItem>
-                <SelectItem value="TRAINING">Training Request</SelectItem>
-                <SelectItem value="OTHER">Other</SelectItem>
+                <SelectItem value="CONGE">Demande de Congé</SelectItem>
+                <SelectItem value="AUTORISATION">Autorisation</SelectItem>
+                <SelectItem value="DOCUMENT">Document RH</SelectItem>
+                <SelectItem value="PRET">Prêt Matériel</SelectItem>
               </SelectContent>
             </Select>
           </FieldGroup>

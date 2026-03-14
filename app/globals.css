@@ -56,6 +56,13 @@
 }
 
 .dark {
+  --color-bg:           #0F172A;
+  --color-surface:      #1E293B;
+  --color-hover:        #334155;
+  --color-text:         #F8FAFC;
+  --color-text-muted:   #94A3B8;
+  --color-border:       #334155;
+
   --background: var(--color-bg);
   --foreground: var(--color-text);
   --card: var(--color-surface);
@@ -80,7 +87,7 @@
   --chart-3: var(--color-brand-amber);
   --chart-4: var(--color-warning);
   --chart-5: var(--color-danger);
-  --sidebar: #FFFFFF;
+  --sidebar: #1E293B;
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-brand-blue);
   --sidebar-primary-foreground: #FFFFFF;

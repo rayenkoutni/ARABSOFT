@@ -36,10 +36,10 @@ export default function MyRequestsPage() {
   if (!user) return null
 
   const filteredRequests = requests.filter(r => {
-    if (selectedTab === 'draft') return r.status === 'DRAFT'
-    if (selectedTab === 'submitted') return r.status === 'SUBMITTED'
-    if (selectedTab === 'approved') return r.status === 'COMPLETED' || r.status === 'RH_APPROVED'
-    if (selectedTab === 'rejected') return r.status === 'REJECTED'
+    if (selectedTab === 'draft') return r.status === 'BROUILLON'
+    if (selectedTab === 'pending') return r.status === 'EN_ATTENTE_CHEF' || r.status === 'EN_ATTENTE_RH'
+    if (selectedTab === 'approved') return r.status === 'APPROUVE'
+    if (selectedTab === 'rejected') return r.status === 'REJETE'
     return true
   })
 
@@ -47,26 +47,26 @@ export default function MyRequestsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>My Requests</h1>
+          <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Mes Demandes</h1>
           <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            View and manage all your requests
+            Visualisez et gérez toutes vos demandes
           </p>
         </div>
         <Link href="/dashboard/new-request">
           <Button className="gap-2" style={{ backgroundColor: 'var(--color-brand-amber)', color: 'var(--color-brand-navy)', fontWeight: 600 }}>
             <Plus className="h-4 w-4" />
-            New Request
+            Nouvelle Demande
           </Button>
         </Link>
       </div>
 
       <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
         <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="draft">Draft</TabsTrigger>
-          <TabsTrigger value="submitted">Submitted</TabsTrigger>
-          <TabsTrigger value="approved">Approved</TabsTrigger>
-          <TabsTrigger value="rejected">Rejected</TabsTrigger>
+          <TabsTrigger value="all">Toutes</TabsTrigger>
+          <TabsTrigger value="draft">Brouillons</TabsTrigger>
+          <TabsTrigger value="pending">En attente</TabsTrigger>
+          <TabsTrigger value="approved">Approuvées</TabsTrigger>
+          <TabsTrigger value="rejected">Rejetées</TabsTrigger>
         </TabsList>
 
         <TabsContent value={selectedTab} className="space-y-4 mt-6">
@@ -85,7 +85,7 @@ export default function MyRequestsPage() {
             </div>
           ) : (
             <div className="text-center py-12 text-muted-foreground">
-              <p>No {selectedTab === 'all' ? 'requests' : selectedTab.toLowerCase()} found</p>
+              <p>Aucune demande {selectedTab === 'all' ? '' : selectedTab} trouvée</p>
             </div>
           )}
         </TabsContent>

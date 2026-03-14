@@ -25,6 +25,17 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`font-sans antialiased ${_plusJakarta.variable}`}>
+        <script 
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                if (localStorage.getItem('user_theme') === 'dark') {
+                  document.documentElement.classList.add('dark');
+                }
+              } catch (e) {}
+            `,
+          }}
+        />
         <AuthProvider>
           {children}
         </AuthProvider>

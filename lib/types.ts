@@ -8,50 +8,43 @@ export interface User {
   name: string
   role: UserRole
   department?: string
-  manager?: string
+  position?: string
+  managerId?: string
   createdAt: Date
 }
 
-// Request status
-export type RequestStatus = 'DRAFT' | 'SUBMITTED' | 'MANAGER_APPROVED' | 'RH_APPROVED' | 'REJECTED' | 'COMPLETED'
+// Request status — matches Prisma enum
+export type RequestStatus = 'BROUILLON' | 'EN_ATTENTE_CHEF' | 'EN_ATTENTE_RH' | 'APPROUVE' | 'REJETE'
 
-// Request type
-export type RequestType = 'LEAVE' | 'EQUIPMENT' | 'TRAINING' | 'OTHER'
+// Request type — matches Prisma enum
+export type RequestType = 'CONGE' | 'AUTORISATION' | 'DOCUMENT' | 'PRET'
 
-// Request interface
+// History entry from Prisma
+export interface RequestHistoryEntry {
+  id: string
+  requestId: string
+  actorId: string
+  actorName: string
+  action: string
+  comment?: string | null
+  createdAt: string
+}
+
+// Request interface — matches Prisma model
 export interface Request {
   id: string
-  userId: string
   type: RequestType
-  title: string
-  description: string
+  approvalType: 'CHEF_THEN_RH' | 'DIRECT_RH'
   status: RequestStatus
-  createdAt: Date
-  updatedAt: Date
-  submittedAt?: Date
-  approvals: Approval[]
-  attachments?: Attachment[]
-}
-
-// Approval step
-export interface Approval {
-  id: string
-  requestId: string
-  approverRole: UserRole
-  approverName: string
-  status: 'PENDING' | 'APPROVED' | 'REJECTED'
-  comment?: string
-  timestamp?: Date
-  order: number
-}
-
-// Attachment
-export interface Attachment {
-  id: string
-  requestId: string
-  filename: string
-  url: string
-  uploadedAt: Date
+  employeeId: string
+  managerId?: string | null
+  comment?: string | null
+  slaDeadline?: string | null
+  slaBreached: boolean
+  createdAt: string
+  updatedAt: string
+  employee?: { name: string }
+  history: RequestHistoryEntry[]
 }
 
 // Dashboard stats

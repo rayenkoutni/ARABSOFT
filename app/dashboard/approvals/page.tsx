@@ -94,16 +94,30 @@ export default function ApprovalsPage() {
     }
   }
 
-  const pendingRequests = requests.filter(r =>
-    r.approvals.some(a => a.approverRole === 'RH' && a.status === 'PENDING')
-  )
+  // Filter to show only requests waiting for HR
+  const pendingRequests = requests.filter(r => r.status === 'EN_ATTENTE_RH')
+
+  const getRequestInfo = (request: Request) => {
+    let title = request.type
+    let description = ''
+    if (request.comment) {
+      const match = request.comment.match(/^\[(.+?)\]\s*-\s*(.*)$/)
+      if (match) {
+        title = match[1]
+        description = match[2]
+      } else {
+        description = request.comment
+      }
+    }
+    return { title, description }
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Pending Approvals</h1>
+        <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Approbations RH</h1>
         <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-          Review and approve requests awaiting HR decision
+          Examinez et approuvez les demandes en attente de validation RH
         </p>
       </div>
 
@@ -126,7 +140,7 @@ export default function ApprovalsPage() {
       ) : (
         <div className="text-center py-12" style={{ color: 'var(--color-text-muted)' }}>
           <CheckCircle2 className="h-12 w-12 mx-auto mb-4 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
-          <p>No pending approvals</p>
+          <p>Aucune approbation RH en attente</p>
         </div>
       )}
 
@@ -134,9 +148,9 @@ export default function ApprovalsPage() {
       <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{selectedRequest?.title}</DialogTitle>
+            <DialogTitle>{selectedRequest && getRequestInfo(selectedRequest).title}</DialogTitle>
             <DialogDescription>
-              Review the approval workflow and provide feedback
+              Examinez le flux d'approbation et fournissez votre avis
             </DialogDescription>
           </DialogHeader>
 
@@ -144,24 +158,31 @@ export default function ApprovalsPage() {
             <div className="space-y-6">
               <div>
                 <h3 className="font-semibold mb-2">Description</h3>
-                <p className="text-sm text-muted-foreground">{selectedRequest.description}</p>
+                <p className="text-sm text-muted-foreground">{getRequestInfo(selectedRequest).description}</p>
               </div>
 
+              {selectedRequest.employee && (
+                <div>
+                  <h3 className="font-semibold mb-2">Demandeur</h3>
+                  <p className="text-sm text-muted-foreground">{selectedRequest.employee.name}</p>
+                </div>
+              )}
+
               <div>
-                <h3 className="font-semibold mb-4">Approval Timeline</h3>
-                <ApprovalTimeline approvals={selectedRequest.approvals} />
+                <h3 className="font-semibold mb-4">Historique</h3>
+                <ApprovalTimeline history={selectedRequest.history} />
               </div>
 
               {actionType && (
                 <div>
                   <label className="text-sm font-medium">
-                    {actionType === 'approve' ? 'Approval' : 'Rejection'} Comment
+                    Commentaire {actionType === 'approve' ? "d'approbation" : 'de rejet'}
                   </label>
                   <Textarea
                     placeholder={
                       actionType === 'approve'
-                        ? 'Add your approval comment (optional)...'
-                        : 'Please provide a reason for rejection'
+                        ? 'Ajoutez un commentaire (optionnel)...'
+                        : 'Veuillez fournir une raison pour le rejet'
                     }
                     value={approvalComment}
                     onChange={e => setApprovalComment(e.target.value)}
@@ -179,7 +200,7 @@ export default function ApprovalsPage() {
                       variant="outline"
                       onClick={() => setSelectedRequest(null)}
                     >
-                      Close
+                      Fermer
                     </Button>
                     <Button
                       variant="destructive"
@@ -187,14 +208,14 @@ export default function ApprovalsPage() {
                       className="gap-2"
                     >
                       <XCircle className="h-4 w-4" />
-                      Reject
+                      Rejeter
                     </Button>
                     <Button
                       onClick={() => setActionType('approve')}
                       className="gap-2"
                     >
                       <CheckCircle2 className="h-4 w-4" />
-                      Approve
+                      Approuver
                     </Button>
                   </>
                 ) : (
@@ -207,14 +228,14 @@ export default function ApprovalsPage() {
                       }}
                       disabled={isSubmitting}
                     >
-                      Cancel
+                      Annuler
                     </Button>
                     <Button
                       onClick={actionType === 'approve' ? handleApprove : handleReject}
                       disabled={isSubmitting || (actionType === 'reject' && !approvalComment.trim())}
                       variant={actionType === 'reject' ? 'destructive' : 'default'}
                     >
-                      {isSubmitting ? 'Processing...' : actionType === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}
+                      {isSubmitting ? 'Traitement...' : actionType === 'approve' ? "Confirmer l'approbation" : 'Confirmer le rejet'}
                     </Button>
                   </>
                 )}

@@ -42,27 +42,33 @@ export default function RequestsPage() {
   }
 
   const filteredRequests = requests.filter(r => {
-    const matchesSearch =
-      r.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.description.toLowerCase().includes(searchTerm.toLowerCase())
+    const searchable = (r.comment || r.type || '').toLowerCase()
+    const employeeName = (r.employee?.name || '').toLowerCase()
+    const matchesSearch = searchTerm === '' ||
+      searchable.includes(searchTerm.toLowerCase()) ||
+      employeeName.includes(searchTerm.toLowerCase())
 
     if (selectedTab === 'pending') {
-      return r.status === 'SUBMITTED' && matchesSearch
+      return (r.status === 'EN_ATTENTE_CHEF' || r.status === 'EN_ATTENTE_RH') && matchesSearch
     } else if (selectedTab === 'approved') {
-      return r.status === 'COMPLETED' && matchesSearch
+      return r.status === 'APPROUVE' && matchesSearch
     } else if (selectedTab === 'rejected') {
-      return r.status === 'REJECTED' && matchesSearch
+      return r.status === 'REJETE' && matchesSearch
     }
 
     return matchesSearch
   })
 
+  const pendingCount = requests.filter(r => r.status === 'EN_ATTENTE_CHEF' || r.status === 'EN_ATTENTE_RH').length
+  const approvedCount = requests.filter(r => r.status === 'APPROUVE').length
+  const rejectedCount = requests.filter(r => r.status === 'REJETE').length
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>All Requests</h1>
+        <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Toutes les Demandes</h1>
         <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-          Manage and review all employee requests
+          Gérez et examinez toutes les demandes des employés
         </p>
       </div>
 
@@ -70,7 +76,7 @@ export default function RequestsPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
           <Input
-            placeholder="Search requests..."
+            placeholder="Rechercher des demandes..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="pl-10"
@@ -80,15 +86,15 @@ export default function RequestsPage() {
 
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
         <TabsList>
-          <TabsTrigger value="all">All ({requests.length})</TabsTrigger>
+          <TabsTrigger value="all">Toutes ({requests.length})</TabsTrigger>
           <TabsTrigger value="pending">
-            Pending ({requests.filter(r => r.status === 'SUBMITTED').length})
+            En attente ({pendingCount})
           </TabsTrigger>
           <TabsTrigger value="approved">
-            Approved ({requests.filter(r => r.status === 'COMPLETED').length})
+            Approuvées ({approvedCount})
           </TabsTrigger>
           <TabsTrigger value="rejected">
-            Rejected ({requests.filter(r => r.status === 'REJECTED').length})
+            Rejetées ({rejectedCount})
           </TabsTrigger>
         </TabsList>
 
@@ -109,7 +115,7 @@ export default function RequestsPage() {
             </div>
           ) : (
             <div className="text-center py-12 text-muted-foreground">
-              <p>No requests found</p>
+              <p>Aucune demande trouvée</p>
             </div>
           )}
         </TabsContent>
