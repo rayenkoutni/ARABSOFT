@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Employee {
+  id           String      @id @default(uuid())
+  name         String
+  email        String      @unique
+  password     String
+  role         Role
+  department   String?
+  position     String?
+  managerId    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  manager      Employee?   @relation("ManagerEmployees", fields: [managerId], references: [id])
+  team         Employee[]  @relation("ManagerEmployees")
+  requests     Request[]   @relation("EmployeeRequests")
+  tasks        Task[]      @relation("AssigneeTasks")
+  evaluations  Evaluation[]
+  auditLogs    AuditLog[]
+  notifications Notification[]
+}
+
+model Request {
+  id           String        @id @default(uuid())
+  type         RequestType
+  approvalType ApprovalType
+  status       RequestStatus @default(EN_ATTENTE_CHEF)
+  employeeId   String
+  managerId    String?
+  comment      String?
+  slaDeadline  DateTime?
+  slaBreached  Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  employee     Employee      @relation("EmployeeRequests", fields: [employeeId], references: [id])
+  history      RequestHistory[]
+}
+
+model RequestHistory {
+  id         String   @id @default(uuid())
+  requestId  String
+  actorId    String
+  actorName  String
+  action     String
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  request    Request  @relation(fields: [requestId], references: [id])
+}
+
+model Task {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  status      String   @default("TODO")
+  priority    String   @default("MEDIUM")
+  assigneeId  String
+  projectId   String?
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignee    Employee @relation("AssigneeTasks", fields: [assigneeId], references: [id])
+  project     Project? @relation(fields: [projectId], references: [id])
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  progress    Int      @default(0)
+  managerId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks       Task[]
+}
+
+model Evaluation {
+  id           String   @id @default(uuid())
+  employeeId   String
+  evaluatorId  String
+  score        Float
+  period       String
+  objectives   String?
+  comments     String?
+  status       String   @default("DRAFT")
+  createdAt    DateTime @default(now())
+
+  employee     Employee @relation(fields: [employeeId], references: [id])
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  employeeId String
+  title      String
+  message    String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  employee   Employee @relation(fields: [employeeId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  action     String
+  entity     String
+  entityId   String
+  details    String?
+  createdAt  DateTime @default(now())
+
+  actor      Employee @relation(fields: [actorId], references: [id])
+}
+
+enum Role {
+  COLLABORATEUR
+  CHEF
+  RH
+}
+
+enum RequestType {
+  CONGE
+  AUTORISATION
+  DOCUMENT
+  PRET
+}
+
+enum RequestStatus {
+  BROUILLON
+  EN_ATTENTE_CHEF
+  EN_ATTENTE_RH
+  APPROUVE
+  REJETE
+}
+
+enum ApprovalType {
+  CHEF_THEN_RH
+  DIRECT_RH
+}
