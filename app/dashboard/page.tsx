@@ -1,20 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-<<<<<<< HEAD
 import { useRouter } from 'next/navigation'
-=======
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 import { useAuth } from '@/lib/auth-context'
 import { requestService } from '@/lib/request-service'
 import { Request } from '@/lib/types'
 import { StatCard } from '@/components/stat-card'
 import { RequestCard } from '@/components/request-card'
 import { Button } from '@/components/ui/button'
-<<<<<<< HEAD
-=======
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 import {
   BarChart3,
   Clock,
@@ -28,10 +21,7 @@ import { BrandedLoading } from '@/components/ui/spinner'
 
 export default function DashboardPage() {
   const { user } = useAuth()
-<<<<<<< HEAD
   const router = useRouter()
-=======
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   const [stats, setStats] = useState({
     totalRequests: 0,
     pendingRequests: 0,
@@ -48,11 +38,7 @@ export default function DashboardPage() {
       try {
         setIsLoading(true)
 
-<<<<<<< HEAD
         // Load stats — unchanged for all roles
-=======
-        // Load stats
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         const statsData = await requestService.getDashboardStats(user.id, user.role)
         setStats(statsData)
 
@@ -61,19 +47,13 @@ export default function DashboardPage() {
         if (user.role === 'RH') {
           requestsData = await requestService.getAllRequests()
         } else if (user.role === 'CHEF') {
-<<<<<<< HEAD
           // Only EN_ATTENTE_CHEF + CHEF_THEN_RH requests — the actionable pending ones
-=======
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
           requestsData = await requestService.getManagerPendingRequests(user.id)
         } else {
           requestsData = await requestService.getUserRequests(user.id)
         }
 
-<<<<<<< HEAD
         // Limit to 5 most recent
-=======
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         setRequests(requestsData.slice(0, 5))
       } finally {
         setIsLoading(false)
@@ -91,7 +71,6 @@ export default function DashboardPage() {
     COLLABORATEUR: 'Employee Dashboard',
   }[user.role]
 
-<<<<<<< HEAD
   // Navigate to My Approvals and pre-open the modal for the selected request
   const handleExamine = (request: Request) => {
     if (user.role === 'CHEF') {
@@ -104,8 +83,6 @@ export default function DashboardPage() {
     }
   }
 
-=======
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -152,11 +129,7 @@ export default function DashboardPage() {
         />
       </div>
 
-<<<<<<< HEAD
       {/* Recent / Pending Requests */}
-=======
-      {/* Recent Requests */}
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>
@@ -189,25 +162,17 @@ export default function DashboardPage() {
               <RequestCard
                 key={request.id}
                 request={request}
-<<<<<<< HEAD
                 onExamine={user.role === 'CHEF' || user.role === 'RH' ? handleExamine : undefined}
-=======
-                showApprovalAction={user.role === 'CHEF' || user.role === 'RH'}
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
               />
             ))}
           </div>
         ) : (
           <div className="text-center py-12" style={{ color: 'var(--color-text-muted)' }}>
             <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
-<<<<<<< HEAD
             {user.role === 'CHEF'
               ? <p>Aucune approbation en attente</p>
               : <p>No requests yet</p>
             }
-=======
-            <p>No requests yet</p>
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
           </div>
         )}
       </div>

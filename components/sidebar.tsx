@@ -38,11 +38,7 @@ export function Sidebar() {
   if (user.role === 'RH') {
     navItems.push(
       {
-<<<<<<< HEAD
         label: 'Request History',
-=======
-        label: 'All Requests',
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         href: '/dashboard/requests',
         icon: <FileText className="h-4 w-4" />,
       },

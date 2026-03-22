@@ -66,11 +66,7 @@ async function main() {
   })
 
   console.log("Seed complete. Demo accounts:")
-<<<<<<< HEAD
   console.log("RH:           rh@demo.com / password123") //sb5xvnujYLWY
-=======
-  console.log("RH:           rh@demo.com / password123")
->>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   console.log("Chef 1:       chef@demo.com / password123")
   console.log("Chef 2:       chef2@demo.com / password123")
   console.log("Collaborateur: collab1@demo.com / password123")
