@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth-context'
+<<<<<<< HEAD
 import { RequestCard } from '@/components/request-card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -14,16 +15,25 @@ import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-s
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 import { Search, X } from 'lucide-react'
+=======
+import { requestService } from '@/lib/request-service'
+import { Request } from '@/lib/types'
+import { RequestCard } from '@/components/request-card'
+import { BrandedLoading } from '@/components/ui/spinner'
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 
 export default function TeamRequestsPage() {
   const { user } = useAuth()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
+<<<<<<< HEAD
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedTab, setSelectedTab] = useState('all')
   const [selectedType, setSelectedType] = useState<string>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -31,7 +41,12 @@ export default function TeamRequestsPage() {
 
       try {
         setIsLoading(true)
+<<<<<<< HEAD
         const data = await requestService.getManagerHistoryRequests()
+=======
+        const data = await requestService.getAllRequests()
+        // Filter for team members' requests
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         setRequests(data)
       } finally {
         setIsLoading(false)
@@ -43,12 +58,17 @@ export default function TeamRequestsPage() {
 
   if (!user || user.role !== 'CHEF') {
     return (
+<<<<<<< HEAD
       <div className="py-12 text-center">
+=======
+      <div className="text-center py-12">
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         <p className="text-muted-foreground">This page is for managers only</p>
       </div>
     )
   }
 
+<<<<<<< HEAD
   const normalizedSearchTerm = normalizeSearchText(searchTerm)
   const availableTypes = Array.from(new Set(requests.map((request) => request.type)))
 
@@ -199,6 +219,35 @@ export default function TeamRequestsPage() {
           )}
         </TabsContent>
       </Tabs>
+=======
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Team Requests</h1>
+        <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
+          View all requests from your team members
+        </p>
+      </div>
+
+      {isLoading ? (
+        <div className="text-center py-12">
+          <BrandedLoading />
+        </div>
+      ) : requests.length > 0 ? (
+        <div className="grid gap-4">
+          {requests.map((request) => (
+            <RequestCard
+              key={request.id}
+              request={request}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12" style={{ color: 'var(--color-text-muted)' }}>
+          <p>No team requests found</p>
+        </div>
+      )}
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
     </div>
   )
 }

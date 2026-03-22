@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 import { formatRequestDateTime } from '@/lib/request-date'
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 import { RequestHistoryEntry } from '@/lib/types'
 import { CheckCircle2, Clock, XCircle } from 'lucide-react'
 
@@ -20,7 +23,11 @@ export function ApprovalTimeline({ history }: ApprovalTimelineProps) {
       {sorted.map((entry, index) => {
         const config = actionConfig[entry.action] || actionConfig.CREATED
         return (
+<<<<<<< HEAD
           <div key={entry.id} className="flex min-w-0 gap-4">
+=======
+          <div key={entry.id} className="flex gap-4">
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
             <div className="flex flex-col items-center">
               <div className="rounded-full p-1" style={{ backgroundColor: config.bg }}>
                 {config.icon}
@@ -30,6 +37,7 @@ export function ApprovalTimeline({ history }: ApprovalTimelineProps) {
               )}
             </div>
 
+<<<<<<< HEAD
             <div className="min-w-0 flex-1 pt-1">
               <p className="font-medium wrap-anywhere" style={{ color: 'var(--color-text)' }}>{entry.actorName}</p>
               <p className="text-sm wrap-anywhere" style={{ color: 'var(--color-text-muted)' }}>{config.label}</p>
@@ -38,6 +46,16 @@ export function ApprovalTimeline({ history }: ApprovalTimelineProps) {
               </p>
               {entry.comment && (
                 <p className="mt-2 text-sm italic wrap-anywhere" style={{ color: 'var(--color-text)' }}>{`"${entry.comment}"`}</p>
+=======
+            <div className="flex-1 pt-1">
+              <p className="font-medium" style={{ color: 'var(--color-text)' }}>{entry.actorName}</p>
+              <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>{config.label}</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                {new Date(entry.createdAt).toLocaleDateString()} {new Date(entry.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+              {entry.comment && (
+                <p className="text-sm mt-2 italic" style={{ color: 'var(--color-text)' }}>{`"${entry.comment}"`}</p>
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
               )}
             </div>
           </div>

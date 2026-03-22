@@ -1,5 +1,6 @@
 'use client'
 
+<<<<<<< HEAD
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
@@ -11,6 +12,12 @@ import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-s
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 import { ApprovalTimeline } from '@/components/approval-timeline'
+=======
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/auth-context'
+import { requestService } from '@/lib/request-service'
+import { Request } from '@/lib/types'
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 import { RequestCard } from '@/components/request-card'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+<<<<<<< HEAD
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrandedLoading } from '@/components/ui/spinner'
@@ -31,17 +39,29 @@ import { CheckCircle2, Search, X, XCircle } from 'lucide-react'
 function MyApprovalsContent() {
   const { user } = useAuth()
   const searchParams = useSearchParams()
+=======
+import { Textarea } from '@/components/ui/textarea'
+import { ApprovalTimeline } from '@/components/approval-timeline'
+import { CheckCircle2, XCircle } from 'lucide-react'
+import { BrandedLoading } from '@/components/ui/spinner'
+
+export default function MyApprovalsPage() {
+  const { user } = useAuth()
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null)
   const [approvalComment, setApprovalComment] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [actionType, setActionType] = useState<'approve' | 'reject' | null>(null)
+<<<<<<< HEAD
   const [selectedStatus, setSelectedStatus] = useState('all')
   const [selectedType, setSelectedType] = useState<string>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -51,6 +71,7 @@ function MyApprovalsContent() {
         setIsLoading(true)
         const data = await requestService.getManagerPendingRequests(user.id)
         setRequests(data)
+<<<<<<< HEAD
 
         const requestId = searchParams.get('requestId')
         if (requestId) {
@@ -59,17 +80,27 @@ function MyApprovalsContent() {
             setSelectedRequest(target)
           }
         }
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
       } finally {
         setIsLoading(false)
       }
     }
 
     loadRequests()
+<<<<<<< HEAD
   }, [user, searchParams])
 
   if (!user || user.role !== 'CHEF') {
     return (
       <div className="py-12 text-center">
+=======
+  }, [user])
+
+  if (!user || user.role !== 'CHEF') {
+    return (
+      <div className="text-center py-12">
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         <p className="text-muted-foreground">This page is for managers only</p>
       </div>
     )
@@ -80,10 +111,20 @@ function MyApprovalsContent() {
 
     try {
       setIsSubmitting(true)
+<<<<<<< HEAD
       const updated = await requestService.approveRequest(selectedRequest.id, user.role, approvalComment)
 
       if (updated) {
         setRequests(requests.filter((request) => request.id !== updated.id))
+=======
+      const updated = await requestService.approveRequest(
+        selectedRequest.id,
+        user.role,
+        approvalComment
+      )
+      if (updated) {
+        setRequests(requests.map(r => (r.id === updated.id ? updated : r)))
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         setSelectedRequest(null)
         setApprovalComment('')
         setActionType(null)
@@ -98,10 +139,20 @@ function MyApprovalsContent() {
 
     try {
       setIsSubmitting(true)
+<<<<<<< HEAD
       const updated = await requestService.rejectRequest(selectedRequest.id, user.role, approvalComment)
 
       if (updated) {
         setRequests(requests.filter((request) => request.id !== updated.id))
+=======
+      const updated = await requestService.rejectRequest(
+        selectedRequest.id,
+        user.role,
+        approvalComment
+      )
+      if (updated) {
+        setRequests(requests.map(r => (r.id === updated.id ? updated : r)))
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         setSelectedRequest(null)
         setApprovalComment('')
         setActionType(null)
@@ -111,6 +162,7 @@ function MyApprovalsContent() {
     }
   }
 
+<<<<<<< HEAD
   const selectedRequestInfo = selectedRequest ? parseRequestContent(selectedRequest) : null
   const pendingRequests = requests.filter((request) => request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH')
   const normalizedSearchTerm = normalizeSearchText(searchTerm)
@@ -146,10 +198,31 @@ function MyApprovalsContent() {
 
     return true
   })
+=======
+  // Filter to only show pending requests for this role
+  const pendingRequests = requests.filter(r => r.status === 'EN_ATTENTE_CHEF')
+
+  // Parse title and description from the comment field
+  const getRequestInfo = (request: Request) => {
+    let title = request.type
+    let description = ''
+    if (request.comment) {
+      const match = request.comment.match(/^\[(.+?)\]\s*-\s*(.*)$/)
+      if (match) {
+        title = match[1]
+        description = match[2]
+      } else {
+        description = request.comment
+      }
+    }
+    return { title, description }
+  }
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 
   return (
     <div className="space-y-6">
       <div>
+<<<<<<< HEAD
         <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>
           Mes Approbations
         </h1>
@@ -276,10 +349,38 @@ function MyApprovalsContent() {
       ) : (
         <div className="py-12 text-center" style={{ color: 'var(--color-text-muted)' }}>
           <CheckCircle2 className="mx-auto mb-4 h-12 w-12 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
+=======
+        <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Mes Approbations</h1>
+        <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
+          Examinez et approuvez les demandes en attente de votre équipe
+        </p>
+      </div>
+
+      {isLoading ? (
+        <div className="text-center py-12">
+          <BrandedLoading />
+        </div>
+      ) : pendingRequests.length > 0 ? (
+        <div className="grid gap-4">
+          {pendingRequests.map((request) => (
+            <div key={request.id} onClick={() => setSelectedRequest(request)}>
+              <RequestCard
+                request={request}
+                onView={setSelectedRequest}
+                showApprovalAction={true}
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12" style={{ color: 'var(--color-text-muted)' }}>
+          <CheckCircle2 className="h-12 w-12 mx-auto mb-4 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
           <p>Aucune approbation en attente</p>
         </div>
       )}
 
+<<<<<<< HEAD
       <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
         <DialogContent className="h-auto max-h-[min(85vh,48rem)] w-[min(calc(100vw-2rem),48rem)] min-w-0 max-w-[min(calc(100vw-2rem),48rem)] overflow-hidden p-0">
           <div className="flex min-h-0 min-w-0 flex-col">
@@ -378,11 +479,112 @@ function MyApprovalsContent() {
               </div>
             )}
           </div>
+=======
+      {/* Approval Dialog */}
+      <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{selectedRequest && getRequestInfo(selectedRequest).title}</DialogTitle>
+            <DialogDescription>
+              Examinez le flux d'approbation et fournissez votre avis
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedRequest && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="font-semibold mb-2">Description</h3>
+                <p className="text-sm text-muted-foreground">{getRequestInfo(selectedRequest).description}</p>
+              </div>
+
+              {selectedRequest.employee && (
+                <div>
+                  <h3 className="font-semibold mb-2">Demandeur</h3>
+                  <p className="text-sm text-muted-foreground">{selectedRequest.employee.name}</p>
+                </div>
+              )}
+
+              <div>
+                <h3 className="font-semibold mb-4">Historique</h3>
+                <ApprovalTimeline history={selectedRequest.history} />
+              </div>
+
+              {actionType && (
+                <div>
+                  <label className="text-sm font-medium">
+                    Commentaire {actionType === 'approve' ? "d'approbation" : 'de rejet'}
+                  </label>
+                  <Textarea
+                    placeholder={
+                      actionType === 'approve'
+                        ? 'Ajoutez un commentaire (optionnel)...'
+                        : 'Veuillez fournir une raison pour le rejet'
+                    }
+                    value={approvalComment}
+                    onChange={e => setApprovalComment(e.target.value)}
+                    className="mt-2"
+                    rows={4}
+                    required={actionType === 'reject'}
+                  />
+                </div>
+              )}
+
+              <DialogFooter className="gap-2">
+                {!actionType ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => setSelectedRequest(null)}
+                    >
+                      Fermer
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => setActionType('reject')}
+                      className="gap-2"
+                    >
+                      <XCircle className="h-4 w-4" />
+                      Rejeter
+                    </Button>
+                    <Button
+                      onClick={() => setActionType('approve')}
+                      className="gap-2"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Approuver
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setActionType(null)
+                        setApprovalComment('')
+                      }}
+                      disabled={isSubmitting}
+                    >
+                      Annuler
+                    </Button>
+                    <Button
+                      onClick={actionType === 'approve' ? handleApprove : handleReject}
+                      disabled={isSubmitting || (actionType === 'reject' && !approvalComment.trim())}
+                      variant={actionType === 'reject' ? 'destructive' : 'default'}
+                    >
+                      {isSubmitting ? 'Traitement...' : actionType === 'approve' ? "Confirmer l'approbation" : 'Confirmer le rejet'}
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            </div>
+          )}
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
         </DialogContent>
       </Dialog>
     </div>
   )
 }
+<<<<<<< HEAD
 
 export default function MyApprovalsPage() {
   return (
@@ -397,3 +599,5 @@ export default function MyApprovalsPage() {
     </Suspense>
   )
 }
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2

@@ -7,12 +7,15 @@ export async function getRequests(): Promise<Request[]> {
   return res.json()
 }
 
+<<<<<<< HEAD
 export async function getRequestsWithView(view: string): Promise<Request[]> {
   const res = await fetch(`/api/requests?view=${view}`, { cache: "no-store" })
   if (!res.ok) throw new Error("Failed to fetch requests")
   return res.json()
 }
 
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 export async function createRequest(userId: string, type: string, title: string, description: string, isDraft: boolean = false) {
   const res = await fetch("/api/requests", {
     method: "POST",
@@ -39,7 +42,10 @@ export async function actionRequest(id: string, action: "APPROVE" | "REJECT", co
 
 export const requestService = {
   getRequests,
+<<<<<<< HEAD
   getRequestsWithView,
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   createRequest,
   actionRequest,
 
@@ -53,6 +59,7 @@ export const requestService = {
   },
 
   async getManagerPendingRequests(managerId: string): Promise<Request[]> {
+<<<<<<< HEAD
     // Returns workflow-pending CHEF_THEN_RH requests for this manager
     return getRequestsWithView("pending");
   },
@@ -68,6 +75,15 @@ export const requestService = {
 
   async getRHHistoryRequests(): Promise<Request[]> {
     return getRequestsWithView("rh-history");
+=======
+    // API Route handles the manager filtering based on current user session role
+    return this.getRequests();
+  },
+
+  async getRHPendingRequests(): Promise<Request[]> {
+    // API Route handles filtering for RH based on auth session role
+    return this.getRequests();
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   },
 
   async getDashboardStats(userId: string, role: string) {

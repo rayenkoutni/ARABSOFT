@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+<<<<<<< HEAD
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth-context'
 import { RequestCard } from '@/components/request-card'
@@ -15,16 +16,30 @@ import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-s
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 import { Plus, Search, X } from 'lucide-react'
+=======
+import { useAuth } from '@/lib/auth-context'
+import { requestService } from '@/lib/request-service'
+import { Request } from '@/lib/types'
+import { RequestCard } from '@/components/request-card'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Plus } from 'lucide-react'
+import Link from 'next/link'
+import { BrandedLoading } from '@/components/ui/spinner'
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 
 export default function MyRequestsPage() {
   const { user } = useAuth()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedTab, setSelectedTab] = useState('all')
+<<<<<<< HEAD
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedType, setSelectedType] = useState<string>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+=======
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -44,6 +59,7 @@ export default function MyRequestsPage() {
 
   if (!user) return null
 
+<<<<<<< HEAD
   const normalizedSearchTerm = normalizeSearchText(searchTerm)
   const availableTypes = Array.from(new Set(requests.map((request) => request.type)))
 
@@ -85,15 +101,31 @@ export default function MyRequestsPage() {
   const approvedCount = searchedRequests.filter((request) => request.status === 'APPROUVE').length
   const rejectedCount = searchedRequests.filter((request) => request.status === 'REJETE').length
 
+=======
+  const filteredRequests = requests.filter(r => {
+    if (selectedTab === 'draft') return r.status === 'BROUILLON'
+    if (selectedTab === 'pending') return r.status === 'EN_ATTENTE_CHEF' || r.status === 'EN_ATTENTE_RH'
+    if (selectedTab === 'approved') return r.status === 'APPROUVE'
+    if (selectedTab === 'rejected') return r.status === 'REJETE'
+    return true
+  })
+
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
+<<<<<<< HEAD
           <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>
             Mes Demandes
           </h1>
           <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
             Visualisez et gerez toutes vos demandes
+=======
+          <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>Mes Demandes</h1>
+          <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
+            Visualisez et gérez toutes vos demandes
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
           </p>
         </div>
         <Link href="/dashboard/new-request">
@@ -104,6 +136,7 @@ export default function MyRequestsPage() {
         </Link>
       </div>
 
+<<<<<<< HEAD
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
@@ -199,17 +232,43 @@ export default function MyRequestsPage() {
         <TabsContent value={selectedTab} className="mt-6 space-y-4">
           {isLoading ? (
             <div className="py-12 text-center">
+=======
+      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="all">Toutes</TabsTrigger>
+          <TabsTrigger value="draft">Brouillons</TabsTrigger>
+          <TabsTrigger value="pending">En attente</TabsTrigger>
+          <TabsTrigger value="approved">Approuvées</TabsTrigger>
+          <TabsTrigger value="rejected">Rejetées</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value={selectedTab} className="space-y-4 mt-6">
+          {isLoading ? (
+            <div className="text-center py-12">
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
               <BrandedLoading />
             </div>
           ) : filteredRequests.length > 0 ? (
             <div className="grid gap-4">
               {filteredRequests.map((request) => (
+<<<<<<< HEAD
                 <RequestCard key={request.id} request={request} />
               ))}
             </div>
           ) : (
             <div className="py-12 text-center text-muted-foreground">
               <p>Aucune demande trouvee pour ce filtre</p>
+=======
+                <RequestCard
+                  key={request.id}
+                  request={request}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <p>Aucune demande {selectedTab === 'all' ? '' : selectedTab} trouvée</p>
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
             </div>
           )}
         </TabsContent>

@@ -9,6 +9,7 @@ const SLA_DAYS: Record<string, number> = {
   PRET: 5,
 }
 
+<<<<<<< HEAD
 export async function GET(req: Request) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -33,10 +34,21 @@ export async function GET(req: Request) {
 
     requests = await prisma.request.findMany({
       where: whereClause,
+=======
+export async function GET() {
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  let requests
+
+  if (user.role === "RH") {
+    requests = await prisma.request.findMany({
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
       include: { employee: { select: { name: true } }, history: true },
       orderBy: { createdAt: "desc" }
     })
   } else if (user.role === "CHEF") {
+<<<<<<< HEAD
     const teamMembers = await prisma.employee.findMany({
       where: { managerId: user.id },
       select: { id: true }
@@ -66,6 +78,14 @@ export async function GET(req: Request) {
 
     requests = await prisma.request.findMany({
       where: whereClause,
+=======
+    const teamIds = await prisma.employee.findMany({
+      where: { managerId: user.id },
+      select: { id: true }
+    })
+    requests = await prisma.request.findMany({
+      where: { employeeId: { in: teamIds.map((e: { id: string }) => e.id) } },
+>>>>>>> f49d7d60cb38a7e60984e5dc779dbb32a52e7fe2
       include: { employee: { select: { name: true } }, history: true },
       orderBy: { createdAt: "desc" }
     })
