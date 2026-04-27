@@ -1,5 +1,6 @@
 import { parseRequestContent } from '@/lib/request-content'
 import { formatRequestDateTime } from '@/lib/request-date'
+import { formatDateOnly, getLeaveDurationLabel, getLeaveImpactSummary, isLeaveRequestType } from '@/lib/leave-request'
 import { buildRequestWorkflowSteps, WorkflowStep } from '@/lib/request-workflow'
 import { Request } from '@/lib/types'
 
@@ -35,16 +36,24 @@ export function formatWorkflowStepSearchText(step: WorkflowStep) {
 export function buildRequestCardSearchText(request: Request, currentUserId?: string) {
   const { title, description } = parseRequestContent(request)
   const workflowSteps = buildRequestWorkflowSteps(request, currentUserId)
+  const leaveImpact = getLeaveImpactSummary({
+    startDate: request.startDate,
+    endDate: request.endDate,
+    leaveBalance: request.employee?.leaveBalance,
+  })
 
   return [
-    `Title: ${title}`,
-    `Description: ${description || 'No description provided'}`,
+    `Titre : ${title}`,
+    `Description : ${description || 'Aucune description fournie'}`,
     request.type,
     requestTypeLabels[request.type] || request.type,
     request.employee?.name,
     request.status,
     requestStatusLabels[request.status] || request.status,
     formatRequestDateTime(request.createdAt),
+    isLeaveRequestType(request.type) ? `Date debut : ${formatDateOnly(request.startDate)}` : '',
+    isLeaveRequestType(request.type) ? `Date fin : ${formatDateOnly(request.endDate)}` : '',
+    isLeaveRequestType(request.type) ? `Duree : ${getLeaveDurationLabel(leaveImpact.requestedDays)}` : '',
     ...workflowSteps.map(formatWorkflowStepSearchText),
   ]
     .filter(Boolean)

@@ -1,440 +1,885 @@
-# Project Map 1.1
-
-## Purpose Of This Document
-
-This file documents the **current** project state as of the latest request-management changes. It is intentionally delta-oriented relative to [PROJECT_MAP.md](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/PROJECT_MAP.md): it explains how the application works now, what is outdated in the older map, and where recent behavior has been implemented.
-
-It is meant to be a practical reference for a developer or AI agent continuing work without having to rediscover the current request workflow, page semantics, filtering model, and modal/navigation behavior.
-
-## Project Overview
-
-This is a Next.js App Router HR portal with three roles:
-
-- `COLLABORATEUR`: creates and tracks own requests
-- `CHEF`: reviews team requests and approves the manager step
-- `RH`: final approver for RH-stage requests and owner of user administration
-
-The most actively evolved part of the codebase is the **request lifecycle UI**:
-
-- request creation
-- role-specific request history pages
-- role-specific pending approval queues
-- shared request card rendering
-- workflow trail / audit-history rendering
-- deep-linked approval popups
-- client-side search + filtering
-
-## Current Architecture
-
-### Backend Shape
-
-- [app/api/requests/route.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/api/requests/route.ts)
-  - Central request read/create endpoint.
-  - `GET` now has **role-aware view partitioning** via `view` query params:
-    - RH:
-      - `rh-pending` => only `EN_ATTENTE_CHEF` + `EN_ATTENTE_RH`
-      - `rh-history` => only terminal `APPROUVE` + `REJETE`
-    - CHEF:
-      - `pending` => only `CHEF_THEN_RH` requests in `EN_ATTENTE_CHEF` + `EN_ATTENTE_RH`
-      - `history` => only `CHEF_THEN_RH` requests in `APPROUVE` + `REJETE`
-    - COLLABORATEUR:
-      - receives own requests without role-specific `view` partitioning
-  - `POST` creates requests, derives `approvalType`, initial `status`, initial history entry, SLA deadline, and notifications.
-
-- [app/api/requests/[id]/action/route.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/api/requests/[id]/action/route.ts)
-  - Enforces approval transitions:
-    - `CHEF` can act only on `EN_ATTENTE_CHEF`
-    - `RH` can act only on `EN_ATTENTE_RH`
-  - Writes `RequestHistory` entries for `APPROVE` / `REJECT`
-  - Sends employee notification updates and RH escalation notifications
-
-### Frontend Service Layer
-
-- [lib/request-service.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-service.ts)
-  - Thin fetch wrapper around `/api/requests`
-  - Important semantic methods:
-    - `getManagerPendingRequests()`
-    - `getManagerHistoryRequests()`
-    - `getRHPendingRequests()`
-    - `getRHHistoryRequests()`
-    - `getUserRequests()`
-  - Still contains compatibility/legacy patterns:
-    - `getUserRequests()` currently delegates to unscoped `getRequests()`, relying on backend role scoping
-    - `submitRequest()` is still a compatibility no-op
-
-## Request Workflow Model By Role
-
-### Collaborateur
-
-- Creates draft or submitted requests from [app/dashboard/new-request/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/new-request/page.tsx)
-- Sees own requests in [app/dashboard/my-requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-requests/page.tsx)
-- Dataset includes broader lifecycle states:
-  - `BROUILLON`
-  - `EN_ATTENTE_CHEF`
-  - `EN_ATTENTE_RH`
-  - `APPROUVE`
-  - `REJETE`
-
-### Chef
-
-- Queue page: [app/dashboard/my-approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-approvals/page.tsx)
-  - Visible pending set: `EN_ATTENTE_CHEF` + `EN_ATTENTE_RH`
-  - Actionable subset: only `EN_ATTENTE_CHEF`
-  - `EN_ATTENTE_RH` remains visible as workflow-tracking, non-clickable
-- History page: [app/dashboard/team-requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/team-requests/page.tsx)
-  - Terminal-only view: `APPROUVE` + `REJETE`
-  - `EN_ATTENTE_RH` was explicitly removed from this page and belongs in the pending workflow queue instead
-
-### RH
-
-- Queue page: [app/dashboard/approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/approvals/page.tsx)
-  - Visible pending set: `EN_ATTENTE_CHEF` + `EN_ATTENTE_RH`
-  - Actionable subset: only `EN_ATTENTE_RH`
-  - `EN_ATTENTE_CHEF` remains visible as tracking-only, non-clickable
-- History page: [app/dashboard/requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/requests/page.tsx)
-  - Terminal-only history: `APPROUVE` + `REJETE`
-  - No pending requests should appear here anymore
-
-## Important Pages And Responsibilities
-
-### Dashboard Overview
-
-- [app/dashboard/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/page.tsx)
-  - Shared top-level role dashboard
-  - Uses role to decide what “recent” means:
-    - RH: all requests
-    - CHEF: manager pending queue
-    - COLLABORATEUR: own requests
-  - Deep-links `Examiner` actions:
-    - CHEF => `/dashboard/my-approvals?requestId=...`
-    - RH => `/dashboard/approvals?requestId=...`
-
-### RH History
-
-- [app/dashboard/requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/requests/page.tsx)
-  - Purpose is now **history only**, not “all requests”
-  - Uses tabs:
-    - `Tous`
-    - `Approuvees`
-    - `Rejetees`
-  - Uses search + date-range + type filters
-
-### Chef History
-
-- [app/dashboard/team-requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/team-requests/page.tsx)
-  - Mirrors RH history structure, but scoped to manager-relevant terminal team requests
-  - Same search/date/type/status filter model as RH history
-
-### Collaborateur Requests
-
-- [app/dashboard/my-requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-requests/page.tsx)
-  - Same filter UI model as history pages, but extended statuses:
-    - `Tous`
-    - `Approuvees`
-    - `Rejetees`
-    - `En attente`
-    - `Brouillon`
-
-### Pending Approval Queues
-
-- [app/dashboard/my-approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-approvals/page.tsx)
-- [app/dashboard/approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/approvals/page.tsx)
-  - Both now support:
-    - shared card-content search
-    - status tabs: `Tous`, `En attente Chef`, `En attente RH`
-    - date range filter
-    - request type filter
-  - These filters narrow the queue only; they do **not** change action permissions
-
-## Shared Components And Utilities
-
-### Request Card Stack
-
-- [components/request-card.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/components/request-card.tsx)
-  - Central card renderer used across history pages, dashboard previews, and queues
-  - Displays:
-    - labeled `Title:`
-    - labeled `Description:`
-    - employee/requester name when present
-    - type badge
-    - status badge
-    - request timestamp
-    - workflow trail
-    - conditional `Examiner` affordance
-  - Layout hardened for long content with wrapping and line-clamped preview text
-
-- [components/request-workflow-trail.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/components/request-workflow-trail.tsx)
-  - Shared condensed per-card workflow history renderer
-  - Used for all roles
-  - Shows:
-    - approved/rejected steps that actually happened
-    - pending next-step placeholder when workflow still active
-    - inline decision comments when present
-
-- [components/approval-timeline.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/components/approval-timeline.tsx)
-  - Full detail timeline used inside approval/detail dialogs
-  - Wraps long comments and shows formatted timestamps
-
-### Request-Domain Utilities
-
-- [lib/request-content.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-content.ts)
-  - Parses request title/description from the `CREATED` history entry comment using `[title] - description`
-  - Falls back to request type as title when parsing fails
-
-- [lib/request-workflow.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-workflow.ts)
-  - Serializes workflow into shared display steps
-  - Decides contextual actor role (`Chef` vs `RH`)
-  - Adds pending labels only when appropriate
-
-- [lib/request-actions.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-actions.ts)
-  - Centralizes “is this request actionable for this role right now?”
-  - Current rule is intentionally simple:
-    - CHEF => only `EN_ATTENTE_CHEF`
-    - RH => only `EN_ATTENTE_RH`
-
-- [lib/request-search.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-search.ts)
-  - Builds normalized searchable text from what users actually see on the card:
-    - title
-    - description
-    - type
-    - employee name
-    - status label
-    - displayed timestamp
-    - workflow steps
-    - workflow comments
-  - Shared by history pages and pending-approval pages
-
-- [lib/request-date.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-date.ts)
-  - Shared date-time formatting helper
-  - The app now prefers date + hour + minute everywhere for request events
-
-- [lib/request-date-filter.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-date-filter.ts)
-  - Shared inclusive `from/to` date range filter
-  - Used by history pages and pending queue pages
-
-- [lib/request-type.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-type.ts)
-  - Shared request type label map used by the filter dropdowns
-
-## Search / Filter / Status Logic
-
-### Shared Pattern Now In Use
-
-History pages and pending-approval pages increasingly follow the same pattern:
-
-1. load role-scoped dataset from backend
-2. optionally reduce by shared search text
-3. optionally reduce by date range
-4. optionally reduce by request type
-5. finally apply status tab filter
-
-This means the final visible card list is the intersection of:
-
-- role visibility rules
-- search term
-- date range
-- request type
-- selected status tab
-
-### Status Tabs By Page
-
-- RH history: `Tous`, `Approuvees`, `Rejetees`
-- CHEF history: `Tous`, `Approuvees`, `Rejetees`
-- COLLABORATEUR requests: `Tous`, `Approuvees`, `Rejetees`, `En attente`, `Brouillon`
-- CHEF pending queue: `Tous`, `En attente Chef`, `En attente RH`
-- RH pending queue: `Tous`, `En attente Chef`, `En attente RH`
-
-Tabs are now rendered as compact segmented controls rather than stretched full-width controls.
-
-## Navigation And Popup Behavior
-
-### Sidebar Semantics
-
-- [components/sidebar.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/components/sidebar.tsx)
-  - RH sidebar now uses:
-    - `Request History`
-    - `Pending Approvals`
-  - CHEF sidebar uses:
-    - `Team Requests`
-    - `My Approvals`
-  - COLLABORATEUR sidebar uses:
-    - `My Requests`
-    - `New Request`
-
-### Approval Popup Behavior
-
-- CHEF queue popup lives in [app/dashboard/my-approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-approvals/page.tsx)
-- RH queue popup lives in [app/dashboard/approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/approvals/page.tsx)
-
-Current behavior:
-
-- popup can auto-open from dashboard deep-links using `requestId`
-- full card click opens popup only for actionable requests
-- non-actionable pending cards remain visible but non-clickable
-- modal layout is hardened for long text:
-  - bounded width
-  - bounded height
-  - scrollable body
-  - persistent footer / action buttons
-
-## Audit / History Behavior
-
-- The application uses `RequestHistory` as the practical audit source for request lifecycle rendering
-- `AuditLog` exists in Prisma schema but is not part of the main request UI flow
-- Card-level history and modal-level history are derived from the same stored action entries rather than fabricated separately
-
-## Known Conventions And Data Flow Patterns
-
-- Request title/description are persisted indirectly inside the `CREATED` history comment payload as `[title] - description`
-- The UI treats `request.createdAt` as the primary displayed request date for cards and filters
-- Workflow step labels are user-facing and partially normalized in shared helpers, but some label maps still exist in multiple files
-- Frontend page semantics depend heavily on backend `view` partitioning in `/api/requests`
-- Several files still contain text-encoding artifacts such as `Ã©` or stripped accents
-
-## What Is Outdated In PROJECT_MAP.md
-
-### Outdated Page Semantics
-
-[PROJECT_MAP.md](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/PROJECT_MAP.md) says:
-
-- RH `app/dashboard/requests/page.tsx` is “RH view of all requests”
-- CHEF `app/dashboard/team-requests/page.tsx` is a general team requests view
-
-That is no longer accurate.
-
-Current reality:
-
-- RH `requests` page is a **terminal history-only page**
-- CHEF `team-requests` page is also a **terminal history-only page**
-- Pending/in-progress workflow items were intentionally separated into:
-  - RH => `app/dashboard/approvals/page.tsx`
-  - CHEF => `app/dashboard/my-approvals/page.tsx`
-
-### Outdated Filtering Description
-
-The old map does not describe the current filter/search system at all. It is now a major part of the request UI:
-
-- shared full-card search
-- date-range filter
-- request type filter
-- role-specific status tabs
-- compact segmented-control tab UI
-
-### Outdated Request Card Description
-
-The old map only says `request-card.tsx` is a “standard request summary card”.
-That undersells the current responsibility. It is now the central display surface for:
-
-- labeled title/description rendering
-- bounded preview behavior
-- workflow trail rendering
-- conditional examiner affordances
-- role-aware action visibility
-- long-content containment
-
-### Outdated Navigation Semantics
-
-The old map still refers to RH “all requests”. The sidebar now exposes RH `Request History`, which is intentionally narrower in meaning.
-
-### Missing Shared Helper Layer
-
-The old map does not mention newer request-domain utilities:
-
-- `lib/request-content.ts`
-- `lib/request-workflow.ts`
-- `lib/request-search.ts`
-- `lib/request-date.ts`
-- `lib/request-date-filter.ts`
-- `lib/request-type.ts`
-- `lib/request-actions.ts`
-
-These now carry a large part of the request UI semantics.
-
-## Recently Added / Changed Behavior
-
-- Request cards now render explicit labels:
-  - `Title:`
-  - `Description:`
-- Long text is now constrained in cards and modals
-- RH history page was converted into request-history-only semantics
-- CHEF history page was restricted to terminal states only
-- RH and CHEF pending pages now separate visible-vs-actionable items
-- Shared workflow trail was generalized across roles
-- Shared card-content search was extended to:
-  - RH history
-  - CHEF history
-  - COLLABORATEUR request list
-  - CHEF pending approvals
-  - RH pending approvals
-- Date/time formatting was standardized to include hour + minute
-- Date-range and type filters were added to history pages and pending queues
-
-## Known Limitations / Technical Debt / Inconsistencies
-
-- **Encoding issues remain** across multiple files and labels (`Ã©`, `Â·`, missing accents).
-- **Filter UI logic is duplicated** across multiple page files rather than abstracted into a shared hook/component.
-- **Status/type label maps are duplicated** in several places:
-  - `request-card.tsx`
-  - `request-search.ts`
-  - `request-type.ts`
-- **`requestService` remains thin but inconsistent**:
-  - comments explain semantics, but methods still rely on implicit backend behavior
-  - `getUserRequests(userId)` ignores its parameter
-- **Dashboard RH data source is broad**: RH dashboard still calls `getAllRequests()`, which is not history-only and is different from RH history semantics.
-- **History counts are not fully normalized**: some pages compute tab counts from search-filtered data but not from all other active filters.
-- **Queue/history page composition remains page-local** rather than role-config-driven.
-- **AuditLog is underused** relative to `RequestHistory`.
-
-## Areas Most Likely To Break
-
-- Any change to the request status enum or approval path rules
-- Any change to how title/description are encoded into the created history comment
-- Any refactor of `/api/requests?view=...` semantics without updating all page assumptions
-- Any attempt to “simplify” card click logic without respecting the visible-vs-actionable split
-- Any date formatting/filtering change that stops aligning with `request.createdAt`
-
-## Suggested Improvements
-
-### High-Value Refactors
-
-- Create a shared `useRequestFilters()` hook that handles:
-  - search
-  - date range
-  - type filter
-  - status tab filtering
-  - tab counts
-- Create a reusable `RequestFilterBar` component for the repeated search/date/type UI
-- Centralize request status/type label normalization in one file and reuse it everywhere
-- Centralize role/view semantics in one backend/frontend shared config instead of scattering `view` strings and page-local assumptions
-- Extract a shared approval modal component used by RH and CHEF queue pages
-
-### Medium-Term Cleanup
-
-- Replace comment-string title/description encoding with explicit DB fields on `Request`
-- Normalize accented labels and fix encoding corruption project-wide
-- Revisit RH dashboard semantics so “recent requests” is intentionally defined
-- Add dedicated DTO/serializer logic on the backend instead of deriving most UI semantics only on the client
-
-### Reliability Improvements
-
-- Add tests around:
-  - role-specific request partitioning
-  - `canUserExamineRequest`
-  - workflow step serialization
-  - search text generation
-  - date-range inclusivity
-  - deep-link popup behavior
-
-## Recommended Reading Order For Continuing Work
-
-1. [prisma/schema.prisma](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/prisma/schema.prisma)
-2. [app/api/requests/route.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/api/requests/route.ts)
-3. [app/api/requests/[id]/action/route.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/api/requests/[id]/action/route.ts)
-4. [lib/request-service.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-service.ts)
-5. [components/request-card.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/components/request-card.tsx)
-6. [lib/request-workflow.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-workflow.ts)
-7. [lib/request-search.ts](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/lib/request-search.ts)
-8. [app/dashboard/my-approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-approvals/page.tsx)
-9. [app/dashboard/approvals/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/approvals/page.tsx)
-10. [app/dashboard/my-requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/my-requests/page.tsx)
-11. [app/dashboard/team-requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/team-requests/page.tsx)
-12. [app/dashboard/requests/page.tsx](/c:/Users/baalo/Downloads/ARABSOFT-main%20(1)/ARABSOFT-main/app/dashboard/requests/page.tsx)
+# ArabSoft Current Technical Project Map
+
+## 1. Project Purpose And Functional Scope
+
+ArabSoft is a role-based internal HR/workflow portal built on Next.js App Router with a custom Node server. The current implementation combines four main domains:
+
+1. HR request submission and approval workflows.
+2. Employee/user administration for HR.
+3. Project and task tracking for managers and collaborators.
+4. Internal chat with real-time delivery via Socket.IO and Kafka.
+
+The codebase is already usable for core request handling, user management, project/task management, and chat, but it is not uniformly mature. Several areas are production-shaped at the UI level while still containing partial wiring, duplicated abstractions, or security/consistency issues.
+
+The real product scope implemented today is narrower than the Prisma schema suggests. The schema also models skills, positions, and evaluations, but those domains do not currently have usable API/UI flows.
+
+## 2. Architecture Overview
+
+### 2.1 Frontend
+
+- Framework: Next.js 16 App Router.
+- Runtime style: mostly client-rendered pages under `app/dashboard/**`.
+- UI stack: Tailwind CSS v4, Radix primitives, shadcn-style UI components under `components/ui/**`.
+- Auth state: client context in `lib/contexts/auth.context.tsx`.
+- Notifications refresh state: client context in `lib/contexts/notification.context.tsx`.
+- Dashboard shell: `app/dashboard/layout.tsx`, `components/navigation.tsx`, `components/sidebar.tsx`.
+
+Important frontend characteristics:
+
+- Most business pages are `"use client"` pages using `fetch` directly.
+- There are no server actions.
+- The frontend relies on `/api/auth/me` plus a JWT cookie for session restoration.
+- OTP enforcement is client-side stateful, not server-enforced.
+
+### 2.2 Backend
+
+- API style: Next.js route handlers in `app/api/**`.
+- Auth helper: `lib/getCurrentUser.ts` reads the `token` cookie and looks up the employee.
+- Custom HTTP server: `server.ts`.
+- Real-time transport: Socket.IO initialized in `server.ts`.
+- Async chat pipeline: Kafka producer/consumer in `server.ts`.
+- Audit logging: `lib/audit.ts`.
+- Scheduled job: `lib/cron.ts`.
+
+Important backend characteristics:
+
+- The app does not use the built-in Next.js server only. It requires `server.ts` for Socket.IO and Kafka.
+- `server.ts` initializes Kafka producer and consumer on startup unconditionally.
+- If Kafka is unavailable, startup is likely to fail rather than degrade gracefully.
+- There is a second service-oriented backend layer under `lib/services/server/**`, but the current routes and server largely do not use it.
+
+### 2.3 Database
+
+- ORM: Prisma.
+- Database: PostgreSQL.
+- Main schema: `prisma/schema.prisma`.
+- Seed script: `prisma/seed.ts`.
+
+Core persisted domains:
+
+- `Employee`
+- `Request` and `RequestHistory`
+- `Project`, `Task`, `ProjectChangeHistory`
+- `Notification`
+- `AuditLog`
+- `Conversation`, `Message`, `MessageRead`
+- `SlaConfig`
+
+Modeled but not operationally implemented end-to-end:
+
+- `Skill`, `EmployeeSkill`
+- `Position`, `PositionSkill`
+- `Evaluation`, `EvaluationObjective`
+
+### 2.4 Authentication
+
+- Login route: `app/api/auth/login/route.ts`
+- Password hashing: `lib/auth.ts`
+- Session token: JWT in `token` httpOnly cookie
+- Current user retrieval: `lib/getCurrentUser.ts`
+- OTP routes:
+  - `app/api/auth/send-otp/route.ts`
+  - `app/api/auth/verify-otp/route.ts`
+
+Important auth behavior:
+
+- Login sets the JWT cookie before OTP verification completes.
+- The frontend blocks dashboard navigation until OTP is verified locally.
+- The backend does not verify OTP state in API middleware or socket auth.
+- RH users can bypass OTP if no OTP code is currently stored.
+
+This means OTP is implemented as a UI gate, not a true backend-enforced second factor.
+
+### 2.5 Infrastructure
+
+- Local orchestration: `docker-compose.yml`
+- App container: custom `Dockerfile`
+- Services in compose:
+  - `app`
+  - `db` (PostgreSQL 15)
+  - `zookeeper`
+  - `kafka`
+
+Important infrastructure notes:
+
+- `docker-compose.yml` assumes Kafka + Zookeeper.
+- The app startup path depends on Kafka being available.
+- Prisma migrations are configured in `prisma.config.ts`, but no `prisma/migrations/` folder exists in the repository.
+
+### 2.6 Important Dependencies
+
+- `next`, `react`, `react-dom`
+- `@prisma/client`, `prisma`
+- `jsonwebtoken`, `bcryptjs`
+- `socket.io`, `socket.io-client`
+- `kafkajs`
+- `nodemailer`
+- `groq-sdk`
+- `node-cron`
+- `zod`, `react-hook-form`
+
+Notable dependency implications:
+
+- AI task generation depends on `GROQ_API_KEY`.
+- Email workflows depend on SMTP, but the mailer has a dev fallback.
+- The project uses `next.config.mjs` with `typescript.ignoreBuildErrors = true`, so type errors can be present without blocking build output.
+
+## 3. Main Runtime Topology
+
+### 3.1 App Entry Points
+
+- UI root: `app/layout.tsx`
+- Login page: `app/page.tsx`
+- Authenticated shell: `app/dashboard/layout.tsx`
+- Custom server: `server.ts`
+
+### 3.2 State And Access Pattern
+
+1. User logs in through `/api/auth/login`.
+2. JWT cookie is created immediately.
+3. Client auth context stores returned user in `localStorage`.
+4. OTP modal is shown on the client if the device is not remembered.
+5. Dashboard pages call role-specific APIs based on `user.role`.
+6. Socket.IO connection is opened from the auth context after login.
+
+### 3.3 Architectural Split To Keep In Mind
+
+There are two parallel backend styles in the repository:
+
+- The actively used direct route-handler style using `prisma` directly from `lib/prisma.ts`.
+- A partially abstracted service layer in `lib/services/**` and `lib/services/server/**`.
+
+The first style is the real runtime path for most features. The second style looks like a refactor-in-progress or abandoned consolidation effort.
+
+## 4. Module-By-Module Implementation Analysis
+
+### 4.1 Authentication And Session Module
+
+**Purpose**
+
+Handles login, logout, current user lookup, OTP, password changes, and client auth state.
+
+**Key files**
+
+- `app/api/auth/login/route.ts`
+- `app/api/auth/me/route.ts`
+- `app/api/auth/logout/route.ts`
+- `app/api/auth/send-otp/route.ts`
+- `app/api/auth/verify-otp/route.ts`
+- `app/api/auth/password/route.ts`
+- `lib/contexts/auth.context.tsx`
+- `app/page.tsx`
+
+**What exists**
+
+- Username/password login against `Employee.email` + hashed `password`.
+- JWT cookie session.
+- OTP generation and verification stored on the employee row (`otpCode`, `otpExpiresAt`).
+- Remembered-device logic in localStorage.
+- Password change API.
+
+**How it works technically**
+
+- Login verifies bcrypt hash and immediately sets a `token` cookie.
+- `getCurrentUser()` decodes the JWT and fetches the employee.
+- Auth context checks `/api/auth/me` on mount.
+- OTP verification is performed by a modal in `app/page.tsx`.
+
+**Connection status**
+
+- Frontend: connected.
+- Backend: connected.
+- Database: connected.
+- Security/business logic: partially connected and partially unsafe.
+
+**Current status**
+
+- Operational for basic sign-in.
+- Partial / insecure for MFA enforcement.
+
+**Important issues**
+
+- OTP is not enforced server-side. Authenticated users can call protected APIs and connect sockets before OTP completion.
+- `verify-otp` bypasses OTP for RH when no code is present.
+- `switchRole` exists in auth context but only mutates local client state; it does not persist anything and should not be treated as real authorization.
+
+### 4.2 Request Workflow Module
+
+**Purpose**
+
+Employees create requests; managers and/or RH review them depending on type; the UI exposes personal views, manager views, and RH views.
+
+**Key files**
+
+- `app/api/requests/route.ts`
+- `app/api/requests/[id]/route.ts`
+- `app/api/requests/[id]/action/route.ts`
+- `lib/services/request.service.ts`
+- `app/dashboard/my-requests/page.tsx`
+- `app/dashboard/new-request/page.tsx`
+- `app/dashboard/my-approvals/page.tsx`
+- `app/dashboard/approvals/page.tsx`
+- `app/dashboard/team-requests/page.tsx`
+- `app/dashboard/requests/page.tsx`
+
+**What exists**
+
+- Request types: leave, authorization, document, loan.
+- Approval types: direct RH or manager-then-RH.
+- Draft status and approval statuses.
+- History trail through `RequestHistory`.
+- Role-based list filtering in the API.
+- Request cards, timelines, search, and date filtering in the UI.
+
+**How it works technically**
+
+- `POST /api/requests` decides the approval flow from request type.
+- Request content is stored mostly inside `comment` as a formatted string like `[title] - description`.
+- History receives a `CREATED` record and subsequent `APPROVE`/`REJECT` records.
+- `parseRequestContent()` reconstructs title/description from the stored string.
+
+**Connection status**
+
+- Frontend: connected.
+- Backend: connected.
+- Database: connected.
+- Business logic: mostly connected, but draft submission/editing is inconsistent.
+
+**Current status**
+
+- Core creation + approval flow is operational.
+- Draft flow is only partially operational.
+
+**Important issues**
+
+- `lib/services/request.service.ts` defines `submitRequest()` as a no-op.
+- `app/dashboard/new-request/page.tsx` calls `submitRequest()` after editing a draft. Because it is a no-op, updating a draft and then "submitting" it does not actually transition status out of `BROUILLON`.
+- Request title/description are not first-class columns; they are encoded inside `comment`, which is brittle.
+- `PUT /api/requests/[id]` only updates `type` and `comment`, not other schema fields like date ranges, amount, or document type.
+- The schema contains richer request fields (`reason`, `startDate`, `endDate`, `amount`, `documentType`) that are not really used by the current UI flow.
+
+### 4.3 SLA Module
+
+**Purpose**
+
+Track SLA deadlines for requests and expose RH metrics and configuration.
+
+**Key files**
+
+- `lib/sla.ts`
+- `lib/cron.ts`
+- `app/api/sla/stats/route.ts`
+- `app/api/sla-config/route.ts`
+- `app/api/sla-config/[id]/route.ts`
+- `app/dashboard/settings/page.tsx`
+
+**What exists**
+
+- `SlaConfig` table with per-request-type `maxHours`.
+- Request creation calculates `slaDeadline`.
+- RH settings tab can view and edit SLA hours.
+- RH dashboard can fetch monthly breach stats.
+
+**Connection status**
+
+- Frontend: connected for RH.
+- Backend: connected.
+- Database: connected.
+- Cron/business logic: broken or unreliable.
+
+**Current status**
+
+- Config and stats UI exist.
+- Automatic breach marking is currently flawed.
+
+**Important issues**
+
+- `lib/cron.ts` filters with `status: { notIn: ['EN_ATTENTE_CHEF', 'EN_ATTENTE_RH'] }`, which is the opposite of the expected pending-request filter. This likely prevents normal pending requests from being marked as SLA-breached.
+- `server.ts` already calls `initCron()`, and `app/api/init/route.ts` can call it again. Multiple schedules can be registered.
+- The settings tab writes SLA values on every numeric input change rather than via an explicit save action.
+
+### 4.4 Employee / User Administration Module
+
+**Purpose**
+
+Allow RH to manage accounts and allow all users to view/update profile information.
+
+**Key files**
+
+- `app/api/employees/route.ts`
+- `app/api/employees/[id]/route.ts`
+- `app/api/employees/profile/route.ts`
+- `app/api/users/team/route.ts`
+- `app/dashboard/users/page.tsx`
+- `app/dashboard/settings/page.tsx`
+
+**What exists**
+
+- RH can list all employees, create employees, edit employees, reset passwords, and delete employees.
+- CHEF can fetch their team.
+- Profile route supports avatar, name, and phone updates.
+- Welcome/reset emails are sent through SMTP or dev fallback.
+
+**Connection status**
+
+- RH admin UI/API/DB: connected.
+- Profile avatar update: connected.
+- Personal info settings UI: only partially connected.
+
+**Current status**
+
+- RH administration is mostly operational.
+- End-user profile editing is partially wired.
+
+**Important issues**
+
+- `app/dashboard/settings/page.tsx` saves personal info (`name`, `email`, `phone`) only to localStorage via `user_profile`; it does not call the profile API. This is a UI-only fake save for those fields.
+- The settings page does use the backend for avatar and password, but not for the rest of the profile.
+- `GET /api/employees` computes `onLeave` as "has any approved leave request ever", not "currently on leave". This makes leave status semantically incorrect.
+- Employee deletion only removes some dependent records. The schema also contains tasks, projects, conversations, messages, message reads, skills, and evaluations linked to employees, so deletion can become fragile as data grows.
+- Account creation/reset emails use `.../login` as the login URL, but the actual login page is `/`.
+
+### 4.5 Projects Module
+
+**Purpose**
+
+Managers create projects, assign team members, track project progress, and collaborate on tasks. RH can view projects and has special approval authority over manager changes to RH-created projects.
+
+**Key files**
+
+- `app/api/projects/route.ts`
+- `app/api/projects/[id]/route.ts`
+- `app/api/projects/[id]/approve/route.ts`
+- `app/dashboard/projects/page.tsx`
+- `app/dashboard/projects/[id]/page.tsx`
+
+**What exists**
+
+- Project listing with role-based visibility.
+- Project creation by CHEF.
+- Team assignment.
+- Project update and delete routes.
+- Project change-history model.
+- Special approval mechanism when a CHEF edits an RH-created project.
+
+**How it works technically**
+
+- `GET /api/projects` lists projects by role.
+- `GET /api/projects?projectId=...` is the actual project detail read path.
+- `PATCH /api/projects/[id]` updates directly for RH or own-manager projects.
+- If a manager edits an RH-created project, the route stores a `ProjectChangeHistory` entry instead of mutating the project immediately.
+- `POST /api/projects/[id]/approve` lets RH approve or reject a pending change request.
+
+**Connection status**
+
+- Core list/detail/create flows: connected.
+- RH approval flow for pending project changes: backend-only / partial.
+
+**Current status**
+
+- Manager project creation and basic editing are operational.
+- RH approval flow exists in backend but is not surfaced in a finished frontend workflow.
+
+**Important issues**
+
+- There is no `GET /api/projects/[id]`; the detail page uses the unusual query-based endpoint `/api/projects?projectId=...`.
+- `lib/services/api.ts` expects `GET /api/projects/[id]` and `PUT /api/projects/[id]`, but the real route implements `PATCH` and no `GET`. That service is stale.
+- I did not find a frontend screen that fetches or manages `/api/projects/[id]/approve`, so pending manager changes to RH-created projects can accumulate without a visible RH review UI.
+- RH-created project creation flow does not appear in current UI, even though the backend logic anticipates RH-created projects.
+
+### 4.6 Tasks / Kanban Module
+
+**Purpose**
+
+Allow teams to create tasks inside projects, move them across statuses, review submitted work, and derive project progress from completed tasks.
+
+**Key files**
+
+- `app/api/projects/[id]/tasks/route.ts`
+- `app/api/projects/[id]/tasks/review/route.ts`
+- `app/api/tasks/route.ts`
+- `app/dashboard/projects/[id]/page.tsx`
+
+**What exists**
+
+- Project-detail Kanban board with `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`.
+- Role-specific task creation and movement rules.
+- Review submission through `submittedForReview`.
+- Manager review flow accepting tasks or requesting revision.
+- Notification side effects for assignment, review, and deadlines.
+
+**How it works technically**
+
+- `PATCH /api/projects/[id]/tasks` is overloaded:
+  - with `taskId` => update task status
+  - without `taskId` => create new task
+- `PATCH /api/projects/[id]/tasks/review` handles manager review.
+- Project progress is recalculated from done-task count after task mutations.
+
+**Connection status**
+
+- Frontend: connected through project detail page.
+- Backend: connected.
+- Database: connected.
+- Shared service abstraction: not connected / stale.
+
+**Current status**
+
+- Core Kanban/task flow is operational for project detail page.
+- Legacy generic task API is only partially relevant.
+
+**Important issues**
+
+- The route uses `PATCH` for both create and update, while `lib/services/api.ts` expects `POST` and `PUT`. That service layer is outdated.
+- There is no dedicated `GET /api/projects/[id]/tasks`; project detail relies on project detail data including tasks.
+- In `app/dashboard/projects/[id]/page.tsx`, the frontend drag permission for CHEF checks whether the manager is in `project.team`, which is usually false. This can block dragging in the UI even though the backend would allow it.
+- Task creation is allowed for collaborators, but only for self-assignment. This is functional, but it should be considered a product choice because it lets collaborators add project tasks directly.
+- `app/api/tasks/route.ts` is a generic legacy endpoint not clearly used by the main project UI.
+
+### 4.7 AI Task Generation Module
+
+**Purpose**
+
+Generate project tasks from project description and team composition.
+
+**Key files**
+
+- `app/api/projects/[id]/generate-tasks/route.ts`
+- `app/dashboard/projects/[id]/page.tsx`
+
+**What exists**
+
+- Manager-only generation request to Groq.
+- Preview/edit UI before saving generated tasks.
+- Persistence of accepted generated tasks into `Task`.
+
+**Connection status**
+
+- Frontend: connected.
+- Backend: connected.
+- Database: connected.
+- External AI dependency: required.
+
+**Current status**
+
+- Operational when `GROQ_API_KEY` is present and the Groq response format is valid.
+- Partial because reliability depends on unstructured model output.
+
+**Important issues**
+
+- Response parsing is fragile and assumes the model returns valid raw JSON.
+- Due date validation is shallow; the prompt requests a date range but the backend does not strongly enforce it.
+- The feature cannot function offline or without Groq quota.
+
+### 4.8 Chat / Messaging Module
+
+**Purpose**
+
+Provide internal direct/group chat with unread counts and real-time delivery.
+
+**Key files**
+
+- `server.ts`
+- `app/api/conversations/route.ts`
+- `app/api/conversations/[id]/messages/route.ts`
+- `app/api/conversations/[id]/read/route.ts`
+- `app/api/employees/chat/route.ts`
+- `app/dashboard/chat/page.tsx`
+- `components/global-message-handler.tsx`
+- `components/message-notification-popup.tsx`
+
+**What exists**
+
+- Conversation listing with unread counts.
+- Private and group conversation creation.
+- Paginated message loading.
+- Read tracking via `MessageRead`.
+- Real-time send/receive via Socket.IO + Kafka.
+- Unread badge in sidebar and popup notifications.
+
+**How it works technically**
+
+- The client emits `send_message` over Socket.IO.
+- `server.ts` validates conversation membership, then publishes to Kafka.
+- Kafka consumer persists the message to PostgreSQL and emits to recipient/sender sockets.
+- The messaging UI separately fetches conversations and message history over REST.
+
+**Connection status**
+
+- Frontend: connected.
+- Backend: connected.
+- Database: connected.
+- Infrastructure: connected, but tightly coupled to Kafka availability.
+
+**Current status**
+
+- Core chat is operational.
+- Notification/read-sync behavior is mixed but mostly working.
+
+**Important issues**
+
+- Startup depends on Kafka; there is no graceful non-Kafka fallback.
+- `server.ts` duplicates logic that also exists in `lib/services/server/chat.service.ts`, but the service class is not the actual runtime path.
+- Message notifications use title `"Nouveau message"` and are intentionally filtered out of `/api/notifications`; unread message status is instead derived from conversations. This split is coherent but easy to misunderstand.
+- Some read-marking logic exists in both message fetch and explicit read route, increasing complexity.
+
+### 4.9 Notifications Module
+
+**Purpose**
+
+Store and expose non-chat notifications and support real-time refresh behavior.
+
+**Key files**
+
+- `app/api/notifications/route.ts`
+- `app/api/notifications/[id]/read/route.ts`
+- `components/navigation.tsx`
+- `lib/notification-context.tsx`
+- `lib/contexts/notification.context.tsx`
+
+**What exists**
+
+- List notifications for current user.
+- Mark as read.
+- Clear all.
+- Bell dropdown and optimistic UI updates.
+
+**Connection status**
+
+- Frontend: connected.
+- Backend: connected.
+- Database: connected.
+
+**Current status**
+
+- Operational.
+
+**Important issues**
+
+- There are duplicate notification context implementations:
+  - `lib/notification-context.tsx`
+  - `lib/contexts/notification.context.tsx`
+- Both files currently contain the same logic, which is maintenance debt.
+
+### 4.10 Audit Module
+
+**Purpose**
+
+Track important mutations for HR visibility.
+
+**Key files**
+
+- `lib/audit.ts`
+- `app/api/audit-logs/route.ts`
+- `app/dashboard/audit/page.tsx`
+
+**What exists**
+
+- Audit entries are written during request, project, employee, and task mutations.
+- RH can view paginated logs and filter by entity and actor name.
+
+**Connection status**
+
+- Frontend: connected.
+- Backend: connected.
+- Database: connected.
+
+**Current status**
+
+- Operational.
+
+**Important issues**
+
+- Logging coverage is selective rather than complete.
+- Failure to log is swallowed in `lib/audit.ts`, which prevents user-facing failures but may hide missing audit records.
+
+### 4.11 Settings / Preferences Module
+
+**Purpose**
+
+Provide account settings, profile avatar, password, notifications preferences, theme, and RH SLA settings.
+
+**Key files**
+
+- `app/dashboard/settings/page.tsx`
+- `app/api/employees/profile/route.ts`
+- `app/api/auth/password/route.ts`
+- `app/api/sla-config/**`
+
+**What exists**
+
+- Avatar upload/delete using base64 persistence into `Employee.avatar`.
+- Password change API.
+- Theme and notification preferences in localStorage.
+- RH-only SLA settings tab.
+
+**Connection status**
+
+- Avatar: fully connected.
+- Password: backend exists, UI partially checks it.
+- Notification preferences/theme: local-only.
+- Personal info editing: local-only.
+
+**Current status**
+
+- Mixed: some settings are real backend features; others are frontend-only preferences.
+
+**Important issues**
+
+- The password form always shows success toast after `fetch`, because it does not check `res.ok`.
+- Personal info edit/save does not persist to the database.
+
+### 4.12 Modeled But Not Implemented Domains
+
+The Prisma schema includes the following domains without corresponding current UI/API coverage:
+
+- Skills and employee skill mapping.
+- Positions and required skill mapping.
+- Evaluations and evaluation objectives.
+
+These are database-level scaffolds today, not active product modules.
+
+## 5. Completed Features
+
+The following are substantially operational in the current codebase:
+
+- JWT login/logout and current-user restoration.
+- Client OTP flow and device remembrance.
+- Employee request creation for collaborators.
+- Manager and RH request approval/rejection flow.
+- Request history/timeline rendering.
+- RH user management: create, edit, delete, reset password.
+- Avatar upload/delete.
+- Project creation and listing with role-based access.
+- Project detail with task Kanban board.
+- Task creation, status progression, and manager review.
+- AI task generation preview/save flow.
+- Real-time chat with conversation list, unread counts, and message persistence.
+- Notification dropdown for non-chat notifications.
+- RH audit log view.
+- RH SLA configuration and monthly breach statistics UI.
+
+## 6. Partially Completed Features
+
+- OTP / MFA:
+  - UX exists.
+  - Backend enforcement does not.
+
+- Draft request workflow:
+  - Draft creation and listing exist.
+  - Draft-to-submitted transition after later editing is broken because `submitRequest()` is a no-op.
+
+- Project approval flow for RH-owned projects:
+  - Backend routes and data model exist.
+  - No clear frontend review workflow is wired.
+
+- Settings:
+  - Avatar and password are real.
+  - Personal info edit screen is mostly local-only.
+
+- Task service abstraction:
+  - Some helper/service files exist.
+  - Real UI uses direct `fetch` against a different contract.
+
+- Leave status in employee listing:
+  - Display exists.
+  - Semantics are inaccurate because it does not check actual leave dates.
+
+## 7. Features Not Yet Implemented
+
+- End-to-end evaluations workflow.
+- End-to-end skills management workflow.
+- End-to-end positions/required skills workflow.
+- Real backend-enforced MFA state.
+- Full RH UI for approving/rejecting project change requests.
+- Proper persisted personal profile editing beyond avatar.
+- Formal automated test coverage.
+- Schema-backed structured request forms for leave dates, loan amount, document subtype, etc.
+
+## 8. Known Bugs, Fragile Flows, And Incomplete Behaviors
+
+### 8.1 Security / Access Bugs
+
+- OTP is not enforced at API or socket layer after login.
+- RH OTP bypass path reduces second-factor guarantees.
+
+### 8.2 Request Workflow Bugs
+
+- Editing a draft and then submitting it from `app/dashboard/new-request/page.tsx` does not truly submit it.
+- Request title/description storage inside `comment` is fragile and non-normalized.
+
+### 8.3 SLA Bugs
+
+- Cron logic filters the wrong statuses and likely misses the exact requests that should be checked.
+- `initCron()` can be called from multiple places.
+
+### 8.4 Project / Task Bugs
+
+- Stale service methods use the wrong HTTP methods for project and task routes.
+- CHEF drag permission in the project detail UI is stricter than backend authorization and can block legitimate manager actions.
+
+### 8.5 User/Profile Bugs
+
+- Settings page personal info save is not persistent.
+- Password change UI does not validate backend success before showing success toast.
+- Employee `onLeave` flag is historically cumulative rather than date-aware.
+- Employee deletion may break once more relational data is present.
+
+### 8.6 General Technical Fragility
+
+- `next.config.mjs` ignores TypeScript build errors.
+- There are duplicate helper/context files for the same concerns.
+- Multiple mojibake/encoding issues are visible in hardcoded French strings and email templates.
+- The custom server and service layer duplicate some messaging logic.
+
+## 9. Schema / Migration / Database Consistency Notes
+
+### 9.1 Schema vs Runtime Usage
+
+- `Request` has fields like `reason`, `startDate`, `endDate`, `amount`, and `documentType`, but the main UI and APIs mostly do not use them.
+- `Employee` includes OTP fields that are used.
+- `Task.submittedForReview`, `reviewComment`, `reviewedById`, and `reviewedAt` are used.
+- `ProjectChangeHistory` is used.
+- `Skill`, `Position`, and `Evaluation` families are currently unused in runtime flows.
+
+### 9.2 Migration State
+
+- `prisma.config.ts` points to `prisma/migrations`.
+- The repository currently has no `prisma/migrations/` folder.
+- This means the schema may be authoritative, but database evolution history is not tracked in-repo at the moment.
+
+### 9.3 Seed Consistency
+
+- `prisma/seed.ts` creates demo RH, two managers, collaborators, and SLA defaults.
+- Seed data matches currently active roles and request types.
+
+### 9.4 Data Modeling Notes
+
+- Request content should likely be normalized into explicit fields instead of parsed string blobs.
+- `Project.priority` is a `String`, while task priority is an enum. This is workable but inconsistent.
+- Delete flows do not yet fully reflect all relational dependencies implied by the schema.
+
+## 10. Role And Permission Behavior By User Type
+
+### 10.1 `COLLABORATEUR`
+
+- Can log in and chat with RH and their manager.
+- Can create requests and save drafts.
+- Can view only their own requests.
+- Can view projects where they are on the team.
+- Can create tasks on projects they can access, but only assign to themselves.
+- Can move only their own tasks, and only `TODO -> IN_PROGRESS -> IN_REVIEW`.
+- Cannot mark tasks directly as `DONE`.
+- Cannot access RH admin pages or approval pages.
+
+### 10.2 `CHEF`
+
+- Can access their team via `/api/users/team`.
+- Can review team requests and approve/reject manager-stage items.
+- Can create projects and assign only their own team members.
+- Can access own projects and some projects involving their team.
+- Can create/delete tasks for their team and review submitted tasks.
+- Can edit projects directly unless the project is RH-created, in which case a change request is generated instead.
+- Cannot use RH-only routes such as employee admin, audit logs, or SLA config.
+
+### 10.3 `RH`
+
+- Can view all requests and finalize RH-stage approvals.
+- Can create, edit, reset password, and delete employees.
+- Can view all projects.
+- Can update any project directly.
+- Can access audit logs and SLA configuration/stats.
+- Is treated as read-only observer in some project UI flows, but the backend still allows project mutation.
+- Has special authority over pending project change approvals in backend routes.
+
+## 11. Technical Debt / Cleanup / Refactor Priorities
+
+### High Priority
+
+- Enforce OTP verification server-side for APIs and sockets.
+- Fix request draft submission after edit.
+- Fix SLA cron filter logic.
+- Add real Prisma migrations or document database bootstrap expectations.
+- Stop ignoring TypeScript build errors.
+
+### Medium Priority
+
+- Unify around one backend architecture instead of keeping both direct-route and service-layer versions.
+- Normalize request content into explicit columns.
+- Replace overloaded task route semantics with cleaner REST contracts.
+- Build RH UI for pending project change approvals.
+- Make settings profile edits actually persist.
+
+### Low / Structural Priority
+
+- Remove duplicate files:
+  - `lib/notification-context.tsx` vs `lib/contexts/notification.context.tsx`
+  - duplicated auth/prisma/task/format helper variants across `lib/` and `lib/services/` / `lib/utils/`
+- Clean up encoding issues in hardcoded UI/email strings.
+- Add test coverage for approval flow, task transitions, and chat authorization.
+
+## 12. Suggested Reading Order For Future Developers Or Agents
+
+### 12.1 First Pass: Understand The Real Product
+
+1. `prisma/schema.prisma`
+2. `server.ts`
+3. `lib/getCurrentUser.ts`
+4. `app/dashboard/layout.tsx`
+5. `components/sidebar.tsx`
+
+### 12.2 Request Workflow
+
+1. `app/api/requests/route.ts`
+2. `app/api/requests/[id]/action/route.ts`
+3. `lib/services/request.service.ts`
+4. `app/dashboard/new-request/page.tsx`
+5. `app/dashboard/my-requests/page.tsx`
+6. `app/dashboard/my-approvals/page.tsx`
+7. `app/dashboard/approvals/page.tsx`
+8. `components/request-card.tsx`
+
+### 12.3 Projects And Tasks
+
+1. `app/api/projects/route.ts`
+2. `app/api/projects/[id]/route.ts`
+3. `app/api/projects/[id]/tasks/route.ts`
+4. `app/api/projects/[id]/tasks/review/route.ts`
+5. `app/api/projects/[id]/generate-tasks/route.ts`
+6. `app/dashboard/projects/page.tsx`
+7. `app/dashboard/projects/[id]/page.tsx`
+
+### 12.4 Chat And Notifications
+
+1. `server.ts`
+2. `app/api/conversations/route.ts`
+3. `app/api/conversations/[id]/messages/route.ts`
+4. `app/dashboard/chat/page.tsx`
+5. `components/navigation.tsx`
+6. `components/global-message-handler.tsx`
+
+### 12.5 RH Administration And Settings
+
+1. `app/api/employees/route.ts`
+2. `app/api/employees/[id]/route.ts`
+3. `app/dashboard/users/page.tsx`
+4. `app/dashboard/settings/page.tsx`
+5. `app/api/audit-logs/route.ts`
+
+## 13. Bottom-Line Assessment
+
+This repository is a functional but uneven full-stack business application. The true implemented product today is:
+
+- a working request/approval portal,
+- a working HR user-management console,
+- a working project/task board,
+- and a working chat system with real-time messaging.
+
+The biggest caution areas are:
+
+- auth/MFA security gaps,
+- partially completed draft and project-approval workflows,
+- stale duplicate abstractions,
+- and schema/features that are modeled but not actually shipped.
+
+Any future work should treat the direct App Router routes plus `server.ts` as the primary source of behavior, and should verify the UI against the real route contracts before building on top of the older service abstractions.

@@ -1,6 +1,8 @@
 import { getCurrentUser } from "@/lib/getCurrentUser"
 import { NextResponse } from "next/server"
 
+export const runtime = "nodejs"
+
 export async function GET() {
   const user = await getCurrentUser()
   if (!user) {

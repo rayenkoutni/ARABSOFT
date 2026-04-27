@@ -2,15 +2,9 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useAuth } from '@/lib/auth-context'
-import { parseRequestContent } from '@/lib/request-content'
-import { matchesRequestDateRange } from '@/lib/request-date-filter'
-import { requestService } from '@/lib/request-service'
-import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
-import { requestTypeLabels } from '@/lib/request-type'
-import { Request } from '@/lib/types'
-import { ApprovalTimeline } from '@/components/approval-timeline'
+import { CheckCircle2, Search, X, XCircle } from 'lucide-react'
 import { RequestCard } from '@/components/request-card'
+import { RequestDetailsSummary } from '@/components/request-details-summary'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -25,7 +19,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { CheckCircle2, Search, X, XCircle } from 'lucide-react'
+import { useAuth } from '@/lib'
+import { parseRequestContent } from '@/lib/request-content'
+import { matchesRequestDateRange } from '@/lib/request-date-filter'
+import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
+import { requestService } from '@/lib'
+import { requestTypeLabels } from '@/lib/request-type'
+import { Request } from '@/lib/types'
 
 function ApprovalsContent() {
   const { user } = useAuth()
@@ -33,6 +33,8 @@ function ApprovalsContent() {
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null)
+  const [isLoadingSelectedRequest, setIsLoadingSelectedRequest] = useState(false)
+  const [selectedRequestError, setSelectedRequestError] = useState('')
   const [approvalComment, setApprovalComment] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [actionType, setActionType] = useState<'approve' | 'reject' | null>(null)
@@ -41,6 +43,21 @@ function ApprovalsContent() {
   const [searchTerm, setSearchTerm] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+
+  const openRequestForExamination = async (requestId: string) => {
+    try {
+      setIsLoadingSelectedRequest(true)
+      setSelectedRequestError('')
+      setSelectedRequest(null)
+      setSelectedRequest(await requestService.getRequestById(requestId))
+    } catch (error) {
+      console.error('Failed to load request details:', error)
+      setSelectedRequest(null)
+      setSelectedRequestError("Impossible de charger les details de la demande.")
+    } finally {
+      setIsLoadingSelectedRequest(false)
+    }
+  }
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -55,7 +72,7 @@ function ApprovalsContent() {
         if (requestId) {
           const target = data.find((request) => request.id === requestId && request.status === 'EN_ATTENTE_RH')
           if (target) {
-            setSelectedRequest(target)
+            await openRequestForExamination(target.id)
           }
         }
       } finally {
@@ -69,7 +86,7 @@ function ApprovalsContent() {
   if (!user || user.role !== 'RH') {
     return (
       <div className="py-12 text-center">
-        <p className="text-muted-foreground">This page is for HR only</p>
+        <p className="text-muted-foreground">Cette page est reservee aux RH</p>
       </div>
     )
   }
@@ -79,6 +96,7 @@ function ApprovalsContent() {
 
     try {
       setIsSubmitting(true)
+      setSelectedRequestError('')
       const updated = await requestService.approveRequest(selectedRequest.id, user.role, approvalComment)
 
       if (updated) {
@@ -86,6 +104,15 @@ function ApprovalsContent() {
         setSelectedRequest(null)
         setApprovalComment('')
         setActionType(null)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Impossible de traiter l'approbation."
+      setSelectedRequestError(message)
+
+      try {
+        setSelectedRequest(await requestService.getRequestById(selectedRequest.id))
+      } catch (refreshError) {
+        console.error('Failed to refresh request after approval error:', refreshError)
       }
     } finally {
       setIsSubmitting(false)
@@ -97,6 +124,7 @@ function ApprovalsContent() {
 
     try {
       setIsSubmitting(true)
+      setSelectedRequestError('')
       const updated = await requestService.rejectRequest(selectedRequest.id, user.role, approvalComment)
 
       if (updated) {
@@ -105,6 +133,8 @@ function ApprovalsContent() {
         setApprovalComment('')
         setActionType(null)
       }
+    } catch (error) {
+      setSelectedRequestError(error instanceof Error ? error.message : "Impossible de traiter le rejet.")
     } finally {
       setIsSubmitting(false)
     }
@@ -261,12 +291,12 @@ function ApprovalsContent() {
               <div
                 key={request.id}
                 className={isActionable ? 'min-w-0 cursor-pointer' : 'min-w-0'}
-                onClick={isActionable ? () => setSelectedRequest(request) : undefined}
+                onClick={isActionable ? () => void openRequestForExamination(request.id) : undefined}
               >
                 <RequestCard
                   request={request}
-                  onView={isActionable ? setSelectedRequest : undefined}
-                  onExamine={isActionable ? setSelectedRequest : undefined}
+                  onView={isActionable ? () => void openRequestForExamination(request.id) : undefined}
+                  onExamine={isActionable ? () => void openRequestForExamination(request.id) : undefined}
                 />
               </div>
             )
@@ -279,42 +309,52 @@ function ApprovalsContent() {
         </div>
       )}
 
-      <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
+      <Dialog
+        open={!!selectedRequest || isLoadingSelectedRequest || !!selectedRequestError}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedRequest(null)
+            setSelectedRequestError('')
+            setActionType(null)
+            setApprovalComment('')
+          }
+        }}
+      >
         <DialogContent className="h-auto max-h-[min(85vh,48rem)] w-[min(calc(100vw-2rem),48rem)] min-w-0 max-w-[min(calc(100vw-2rem),48rem)] overflow-hidden p-0">
           <div className="flex min-h-0 min-w-0 flex-col">
             <DialogHeader className="min-w-0 shrink-0 border-b px-6 py-5 pr-12">
               <DialogTitle className="min-w-0 max-w-full whitespace-normal wrap-anywhere [word-break:break-word]">
-                {selectedRequestInfo && `Title: ${selectedRequestInfo.title}`}
+                {selectedRequestInfo && `Titre : ${selectedRequestInfo.title}`}
               </DialogTitle>
               <DialogDescription className="min-w-0 max-w-full wrap-anywhere [word-break:break-word]">
                 Examinez le flux d&apos;approbation et fournissez votre avis
               </DialogDescription>
             </DialogHeader>
 
-            {selectedRequest && (
+            {isLoadingSelectedRequest && (
+              <div className="px-6 py-10 text-center">
+                <BrandedLoading />
+              </div>
+            )}
+
+            {!isLoadingSelectedRequest && selectedRequestError && (
+              <div className="px-6 py-8">
+                <p className="text-sm" style={{ color: '#991B1B' }}>
+                  {selectedRequestError}
+                </p>
+              </div>
+            )}
+
+            {!isLoadingSelectedRequest && selectedRequest && (
               <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <div className="min-h-0 min-w-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
-                  <div className="min-w-0">
-                    <p className="min-w-0 whitespace-pre-wrap text-sm text-muted-foreground wrap-anywhere [word-break:break-word]">
-                      Description: {selectedRequestInfo?.description || 'No description provided'}
-                    </p>
-                  </div>
-
-                  {selectedRequest.employee && (
-                    <div className="min-w-0">
-                      <h3 className="mb-2 font-semibold">Demandeur</h3>
-                      <p className="min-w-0 text-sm text-muted-foreground wrap-anywhere [word-break:break-word]">
-                        {selectedRequest.employee.name}
-                      </p>
+                  {selectedRequestError && (
+                    <div className="rounded-lg p-4 text-sm" style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}>
+                      {selectedRequestError}
                     </div>
                   )}
 
-                  <div className="min-w-0">
-                    <h3 className="mb-4 font-semibold">Historique</h3>
-                    <div className="min-w-0 max-w-full wrap-anywhere [word-break:break-word]">
-                      <ApprovalTimeline history={selectedRequest.history} />
-                    </div>
-                  </div>
+                  <RequestDetailsSummary request={selectedRequest} showBalanceImpact showRequester />
 
                   {actionType && (
                     <div className="min-w-0">

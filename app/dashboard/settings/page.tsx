@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
-import { User, Bell, Lock, Palette, Eye, EyeOff, Save, X, Edit2, CheckCircle2 } from 'lucide-react'
+import { User, Bell, Lock, Palette, Eye, EyeOff, Save, X, Edit2, CheckCircle2, Clock } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 
 export default function SettingsPage() {
@@ -22,28 +22,151 @@ export default function SettingsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    const savedAvatar = localStorage.getItem('user_avatar')
-    if (savedAvatar) setAvatarSrc(savedAvatar)
+    const checkAvatar = async () => {
+      try {
+        const res = await fetch('/api/employees/profile')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.avatar) {
+            setAvatarSrc(data.avatar)
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch profile:', e)
+      }
+    }
+    checkAvatar()
   }, [])
+
+  const [pendingAvatar, setPendingAvatar] = useState<string | null>(null)
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
+    // Validate file size (max 200KB)
+    if (file.size > 200 * 1024) {
+      toast({
+        description: "L'image est trop grande. Taille maximum autorisée: 200KB",
+        className: "bg-red-500 text-white border-none",
+        duration: 5000,
+      })
+      e.target.value = ''
+      return
+    }
+
+    // Validate file type
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast({
+        description: "Format non supporté. Utilisez JPG, PNG ou WebP",
+        className: "bg-red-500 text-white border-none",
+        duration: 5000,
+      })
+      e.target.value = ''
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = (event) => {
       const base64 = event.target?.result as string
+      setPendingAvatar(base64)
       setAvatarSrc(base64)
-      localStorage.setItem('user_avatar', base64)
-      window.dispatchEvent(new Event('avatarChange')) // trigger topbar update if needed
     }
     reader.readAsDataURL(file)
   }
 
-  const handleDeletePhoto = () => {
+  const handleSaveAvatar = async () => {
+    if (!pendingAvatar) return
+    
+    setIsSavingAvatar(true)
+    try {
+      console.log("📤 Sending avatar to server, length:", pendingAvatar.length)
+      const res = await fetch('/api/employees/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar: pendingAvatar })
+      })
+      
+      console.log("📥 Response status:", res.status)
+      
+      if (res.ok) {
+        const updatedUser = await res.json()
+        console.log("📥 Response data:", updatedUser)
+        
+        // Update local storage and trigger refresh
+        const currentUserData = JSON.parse(localStorage.getItem('hr_user') || '{}')
+        const newUserData = { ...currentUserData, ...updatedUser }
+        localStorage.setItem('hr_user', JSON.stringify(newUserData))
+        localStorage.setItem('user_avatar', updatedUser.avatar || '')
+        
+        // Broadcast avatar change to all tabs and clear cache for this user
+        window.dispatchEvent(new Event('avatarChange'))
+        window.dispatchEvent(new CustomEvent('avatarUpdated', { 
+          detail: { userId: newUserData.id, avatar: updatedUser.avatar } 
+        }))
+        
+        // Clear this user's avatar from cache so other components reload fresh data
+        if (typeof window !== 'undefined') {
+          try {
+            const cache = localStorage.getItem('user_profile_pictures')
+            if (cache) {
+              const pictures = JSON.parse(cache)
+              delete pictures[newUserData.id]
+              localStorage.setItem('user_profile_pictures', JSON.stringify(pictures))
+            }
+          } catch (e) {
+            console.error('Error clearing avatar cache:', e)
+          }
+        }
+        setPendingAvatar(null)
+        
+        toast({
+          description: (
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
+              <span>Photo de profil mise à jour</span>
+            </div>
+          ),
+          className: "bg-[#10B981] text-white border-none",
+          duration: 3000,
+        })
+      } else {
+        const error = await res.json()
+        console.error("❌ Server error:", error)
+        toast({
+          description: "Erreur lors de la sauvegarde",
+          className: "bg-red-500 text-white border-none",
+          duration: 3000,
+        })
+      }
+    } catch (error) {
+      console.error('❌ Error saving avatar:', error)
+    } finally {
+      setIsSavingAvatar(false)
+    }
+  }
+
+  const handleDeletePhoto = async () => {
+    const previousAvatar = avatarSrc
     setAvatarSrc(null)
-    localStorage.removeItem('user_avatar')
-    window.dispatchEvent(new Event('avatarChange'))
+    
+      try {
+        await fetch('/api/employees/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ avatar: null })
+        })
+        const currentUserData = JSON.parse(localStorage.getItem('hr_user') || '{}')
+        localStorage.setItem('user_avatar', '')
+        window.dispatchEvent(new Event('avatarChange'))
+        window.dispatchEvent(new CustomEvent('avatarUpdated', { 
+          detail: { userId: currentUserData.id, avatar: null } 
+        }))
+    } catch (error) {
+      setAvatarSrc(previousAvatar)
+      console.error('Error deleting avatar:', error)
+    }
   }
 
   const getInitials = (name: string) => {
@@ -184,32 +307,41 @@ export default function SettingsPage() {
         <TabsList className="flex md:flex-col h-auto bg-transparent items-start justify-start space-x-2 md:space-x-0 md:space-y-2 w-full md:w-64 overflow-x-auto pb-2 md:pb-0">
           <TabsTrigger 
             value="profile" 
-            className="w-full justify-start data-[state=active]:bg-white data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
+            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
           >
             <User className="h-4 w-4 mr-2" />
             Profil
           </TabsTrigger>
           <TabsTrigger 
             value="security" 
-            className="w-full justify-start data-[state=active]:bg-white data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
+            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
           >
             <Lock className="h-4 w-4 mr-2" />
             Sécurité
           </TabsTrigger>
           <TabsTrigger 
             value="notifications" 
-            className="w-full justify-start data-[state=active]:bg-white data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
+            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
           >
             <Bell className="h-4 w-4 mr-2" />
             Notifications
           </TabsTrigger>
           <TabsTrigger 
             value="appearance" 
-            className="w-full justify-start data-[state=active]:bg-white data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
+            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
           >
             <Palette className="h-4 w-4 mr-2" />
             Apparence
           </TabsTrigger>
+          {user.role === 'RH' && (
+            <TabsTrigger 
+              value="sla" 
+              className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
+            >
+              <Clock className="h-4 w-4 mr-2" />
+              SLA
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <div className="flex-1 space-y-6">
@@ -242,6 +374,15 @@ export default function SettingsPage() {
                   >
                     Changer la photo
                   </Button>
+                  {pendingAvatar && (
+                    <Button 
+                      onClick={handleSaveAvatar}
+                      disabled={isSavingAvatar}
+                      style={{ backgroundColor: 'var(--color-brand-navy)', color: 'white' }}
+                    >
+                      {isSavingAvatar ? 'Sauvegarde...' : 'Sauvegarder'}
+                    </Button>
+                  )}
                   {avatarSrc && (
                     <div 
                       className="text-sm cursor-pointer hover:underline" 
@@ -486,8 +627,72 @@ export default function SettingsPage() {
               </div>
             </Card>
           </TabsContent>
+
+          {user.role === 'RH' && (
+            <TabsContent value="sla" className="m-0 opacity-100 animate-in fade-in duration-300">
+              <SlaSettingsTab />
+            </TabsContent>
+          )}
         </div>
       </Tabs>
     </div>
+  )
+}
+
+function SlaSettingsTab() {
+  const [configs, setConfigs] = useState<{ id: string; requestType: string; maxHours: number; description?: string | null }[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/sla-config').then((res) => res.json()).then((data) => { setConfigs(data); setLoading(false) })
+  }, [])
+
+  const handleUpdate = async (id: string, maxHours: number) => {
+    await fetch(`/api/sla-config/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxHours }),
+    })
+    setConfigs(configs.map((c) => (c.id === id ? { ...c, maxHours } : c)))
+  }
+
+  const labels: Record<string, string> = { CONGE: 'Congé', AUTORISATION: 'Autorisation', PRET: 'Prêt', DOCUMENT: 'Document' }
+
+  if (loading) return <div className="p-6 text-center">Chargement...</div>
+
+  return (
+    <Card className="p-6">
+      <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Configuration SLA</h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="text-left py-3 font-medium" style={{ color: 'var(--color-text)' }}>Type</th>
+              <th className="text-left py-3 font-medium" style={{ color: 'var(--color-text)' }}>Délai (heures)</th>
+              <th className="text-left py-3 font-medium" style={{ color: 'var(--color-text)' }}>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {configs.map((config) => (
+              <tr key={config.id} className="border-b">
+                <td className="py-3" style={{ color: 'var(--color-text)' }}>{labels[config.requestType] || config.requestType}</td>
+                <td className="py-3">
+                  <Input
+                    type="number"
+                    value={config.maxHours}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value)
+                      if (val > 0) handleUpdate(config.id, val)
+                    }}
+                    className="w-24"
+                  />
+                </td>
+                <td className="py-3 text-muted-foreground">{config.description || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   )
 }

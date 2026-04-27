@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib'
+import { useNotificationRefresh } from '@/lib/notification-context'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -26,43 +27,70 @@ interface Notification {
 export function Navigation() {
   const { user, logout } = useAuth()
   const router = useRouter()
+  const { refreshKey } = useNotificationRefresh()
   const [avatar, setAvatar] = useState<string | null>(null)
   const [notifications, setNotifications] = useState<Notification[]>([])
 
-  useEffect(() => {
-    // Load existing avatar
-    const saved = localStorage.getItem('user_avatar')
-    if (saved) setAvatar(saved)
+  const getProfilePicture = (userId: string): string | null => {
+    if (typeof window === 'undefined') return null
+    try {
+      const profilePictures = localStorage.getItem('user_profile_pictures')
+      if (profilePictures) {
+        const pictures = JSON.parse(profilePictures)
+        return pictures[userId] || null
+      }
+    } catch (error) {
+      console.error('Error loading profile picture:', error)
+    }
+    return null
+  }
 
-    // Listen for changes from Settings page
+  useEffect(() => {
+    if (!user) return
+    
+    const userAvatar = getProfilePicture(user.id)
+    if (userAvatar) {
+      setAvatar(userAvatar)
+    } else if (user?.avatar) {
+      setAvatar(user.avatar)
+    }
+
     const handleAvatarChange = () => {
-      const updated = localStorage.getItem('user_avatar')
-      setAvatar(updated)
+      const updated = getProfilePicture(user.id)
+      setAvatar(updated || user?.avatar || null)
     }
     
     window.addEventListener('avatarChange', handleAvatarChange)
     return () => window.removeEventListener('avatarChange', handleAvatarChange)
-  }, [])
+  }, [user])
 
   useEffect(() => {
     if (!user) return
 
-    const fetchNotifications = async () => {
-      try {
-        const res = await fetch('/api/notifications')
-        if (res.ok) {
-          const data = await res.json()
+    const fetchNotifications = () => {
+      fetch('/api/notifications')
+        .then(res => res.json())
+        .then(data => {
           setNotifications(data)
-        }
-      } catch (err) {
-        console.error("Failed to fetch notifications")
-      }
+        })
+        .catch(err => console.error("Failed to fetch notifications", err))
     }
 
     fetchNotifications()
     // Poll every 30 seconds
     const interval = setInterval(fetchNotifications, 30000)
-    return () => clearInterval(interval)
+
+    // Listen for custom event to refresh notifications
+    const handleRefresh = () => {
+      console.log("🔔 Notification refresh triggered")
+      fetchNotifications()
+    }
+    window.addEventListener('refreshNotifications', handleRefresh)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('refreshNotifications', handleRefresh)
+    }
   }, [user])
 
   const handleReadNotification = async (id: string) => {
@@ -71,8 +99,19 @@ export function Navigation() {
     
     try {
       await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' })
+      window.dispatchEvent(new Event('refreshNotifications'))
     } catch(err) {
       // Revert if failed
+    }
+  }
+
+  const handleClearAllNotifications = async () => {
+    try {
+      await fetch('/api/notifications', { method: 'DELETE' })
+      setNotifications([])
+      window.dispatchEvent(new Event('refreshNotifications'))
+    } catch(err) {
+      console.error("Failed to clear notifications")
     }
   }
 
@@ -90,7 +129,7 @@ export function Navigation() {
   return (
     <nav className="border-b" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
       <div className="flex items-center justify-between px-6 py-3">
-        <Link href="/" className="flex items-center gap-2">
+        <Link href="/dashboard" className="flex items-center gap-2">
           <span style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--color-brand-blue)' }}>ARAB<span style={{ color: '#F5A623' }}>SOFT</span></span>
           <span style={{ fontSize: '11px', fontWeight: 600, color: '#7B8CA6', letterSpacing: '0.1em' }}>HR PORTAL</span>
         </Link>
@@ -111,8 +150,19 @@ export function Navigation() {
             <DropdownMenuContent align="end" className="w-80">
               <div className="flex items-center justify-between px-4 py-2 border-b" style={{ borderColor: 'var(--color-border)' }}>
                 <span className="font-semibold" style={{ color: 'var(--color-text)' }}>Notifications</span>
-                {unreadCount > 0 && <span className="text-xs" style={{ color: 'var(--color-brand-blue)' }}>{unreadCount} non lues</span>}
+                {notifications.length > 0 && (
+                  <button
+                    onClick={handleClearAllNotifications}
+                    className="text-xs hover:underline cursor-pointer"
+                    style={{ color: 'var(--color-danger)' }}
+                  >
+                    Tout effacer
+                  </button>
+                )}
               </div>
+              {notifications.length > 0 && unreadCount > 0 && (
+                <div className="px-4 py-1 text-xs" style={{ color: 'var(--color-brand-blue)' }}>{unreadCount} non lues</div>
+              )}
               <div className="max-h-80 overflow-y-auto">
                 {notifications.length === 0 ? (
                   <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>

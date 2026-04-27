@@ -7,7 +7,7 @@ export interface ParsedRequestContent {
 
 export function parseRequestContent(request: Request): ParsedRequestContent {
   const createdEntry = request.history.find((entry) => entry.action === 'CREATED')
-  const raw = createdEntry?.comment ?? request.comment ?? ''
+  const raw = request.comment ?? createdEntry?.comment ?? ''
   const fallbackTitle = request.type
 
   if (!raw) {

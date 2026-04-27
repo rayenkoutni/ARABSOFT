@@ -1,12 +1,24 @@
-import { prisma } from "@/lib/prisma"
-import { getCurrentUser } from "@/lib/getCurrentUser"
 import { NextResponse } from "next/server"
+import { logAudit } from "@/lib/audit"
+import { getCurrentUser } from "@/lib/getCurrentUser"
+import { calculateLeaveBusinessDays, isLeaveRequestType, parseDateOnlyToUtcDate } from "@/lib/leave-request"
+import { prisma } from "@/lib/prisma"
+import { requestInputSchema } from "@/lib/request-validation"
+import { getSlaDeadline } from "@/lib/sla"
 
-const SLA_DAYS: Record<string, number> = {
-  CONGE: 3,
-  AUTORISATION: 1,
-  DOCUMENT: 2,
-  PRET: 5,
+const requestInclude = {
+  employee: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      leaveBalance: true,
+      hireDate: true,
+    },
+  },
+  history: {
+    orderBy: { createdAt: "asc" as const },
+  },
 }
 
 export async function GET(req: Request) {
@@ -33,30 +45,25 @@ export async function GET(req: Request) {
 
     requests = await prisma.request.findMany({
       where: whereClause,
-      include: { employee: { select: { name: true } }, history: true },
-      orderBy: { createdAt: "desc" }
+      include: requestInclude,
+      orderBy: { createdAt: "desc" },
     })
   } else if (user.role === "CHEF") {
     const teamMembers = await prisma.employee.findMany({
       where: { managerId: user.id },
-      select: { id: true }
+      select: { id: true },
     })
-    const teamIds = teamMembers.map((e: { id: string }) => e.id)
+    const teamIds = teamMembers.map((employee: { id: string }) => employee.id)
 
-    // Build where clause depending on the requested view
     let whereClause: Record<string, unknown> = { employeeId: { in: teamIds } }
 
     if (view === "pending") {
-      // Pending workflow items still relevant to this manager:
-      // - EN_ATTENTE_CHEF: actionable by manager
-      // - EN_ATTENTE_RH: already approved by manager, still in active workflow
       whereClause = {
         employeeId: { in: teamIds },
         approvalType: "CHEF_THEN_RH",
         status: { in: ["EN_ATTENTE_CHEF", "EN_ATTENTE_RH"] },
       }
     } else if (view === "history") {
-      // Terminal request history only
       whereClause = {
         employeeId: { in: teamIds },
         approvalType: "CHEF_THEN_RH",
@@ -66,14 +73,14 @@ export async function GET(req: Request) {
 
     requests = await prisma.request.findMany({
       where: whereClause,
-      include: { employee: { select: { name: true } }, history: true },
-      orderBy: { createdAt: "desc" }
+      include: requestInclude,
+      orderBy: { createdAt: "desc" },
     })
   } else {
     requests = await prisma.request.findMany({
       where: { employeeId: user.id },
-      include: { history: true },
-      orderBy: { createdAt: "desc" }
+      include: requestInclude,
+      orderBy: { createdAt: "desc" },
     })
   }
 
@@ -84,19 +91,81 @@ export async function POST(req: Request) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const body = await req.json()
+  const rawBody = await req.json()
+  const parsedBody = requestInputSchema.safeParse(rawBody)
+  if (!parsedBody.success) {
+    return NextResponse.json({ error: parsedBody.error.issues[0]?.message ?? "Requete invalide" }, { status: 400 })
+  }
 
-  const approvalType = 
-    body.type === "DOCUMENT" || body.type === "PRET" 
-      ? "DIRECT_RH" 
+  const body = parsedBody.data
+
+  const employee = await prisma.employee.findUnique({
+    where: { id: user.id },
+    select: {
+      id: true,
+      name: true,
+      managerId: true,
+      leaveBalance: true,
+    },
+  })
+
+  if (!employee) {
+    return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 })
+  }
+
+  let startDate: Date | null = null
+  let endDate: Date | null = null
+
+  if (isLeaveRequestType(body.type)) {
+    startDate = parseDateOnlyToUtcDate(body.startDate ?? "")
+    endDate = parseDateOnlyToUtcDate(body.endDate ?? "")
+
+    if (!startDate || !endDate) {
+      return NextResponse.json(
+        { error: "Les dates de debut et de fin sont obligatoires pour une demande de conge." },
+        { status: 400 },
+      )
+    }
+
+    const requestedDays = calculateLeaveBusinessDays(body.startDate ?? "", body.endDate ?? "")
+    if (requestedDays > employee.leaveBalance) {
+      return NextResponse.json(
+        { error: "Solde conge insuffisant, veuillez changer la duree." },
+        { status: 400 },
+      )
+    }
+
+    const overlappingRequest = await prisma.request.findFirst({
+      where: {
+        employeeId: user.id,
+        type: "CONGE",
+        status: { in: ["EN_ATTENTE_CHEF", "EN_ATTENTE_RH", "APPROUVE"] },
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+      },
+      select: { id: true },
+    })
+
+    if (overlappingRequest) {
+      return NextResponse.json(
+        { error: "Une demande de conge existe deja sur cette periode." },
+        { status: 400 },
+      )
+    }
+  }
+
+  const approvalType =
+    body.type === "DOCUMENT" || body.type === "PRET"
+      ? "DIRECT_RH"
       : "CHEF_THEN_RH"
 
   const initialStatus = body.isDraft
     ? "BROUILLON"
-    : (approvalType === "DIRECT_RH" ? "EN_ATTENTE_RH" : "EN_ATTENTE_CHEF")
+    : approvalType === "DIRECT_RH"
+      ? "EN_ATTENTE_RH"
+      : "EN_ATTENTE_CHEF"
 
-  const slaDeadline = new Date()
-  slaDeadline.setDate(slaDeadline.getDate() + (SLA_DAYS[body.type] ?? 3))
+  const slaDeadline = await getSlaDeadline(body.type)
 
   const request = await prisma.request.create({
     data: {
@@ -104,43 +173,57 @@ export async function POST(req: Request) {
       approvalType,
       status: initialStatus,
       employeeId: user.id,
-      managerId: user.managerId,
+      managerId: employee.managerId,
+      comment: body.comment,
+      startDate,
+      endDate,
       slaDeadline,
       history: {
         create: {
           actorId: user.id,
-          actorName: user.name,
+          actorName: employee.name,
           action: "CREATED",
-          comment: body.comment ?? null
-        }
-      }
+          comment: body.comment,
+        },
+      },
     },
-    include: { history: true }
+    include: requestInclude,
   })
 
-  // Create notifications depending on who needs to approve it first
   if (approvalType === "DIRECT_RH") {
-    // Notify all RH users
     const rhUsers = await prisma.employee.findMany({ where: { role: "RH" } })
     if (rhUsers.length > 0) {
       await prisma.notification.createMany({
         data: rhUsers.map((rh: { id: string }) => ({
           employeeId: rh.id,
           title: "Nouvelle demande",
-          message: `${user.name} a soumis une nouvelle demande de type ${body.type}`
-        }))
+          message: `${employee.name} a soumis une nouvelle demande de type ${body.type}`,
+        })),
       })
     }
-  } else if (user.managerId) {
-    // Notify specific Manager
+  } else if (employee.managerId) {
     await prisma.notification.create({
       data: {
-        employeeId: user.managerId,
+        employeeId: employee.managerId,
         title: "Nouvelle demande",
-        message: `${user.name} de votre équipe a soumis une nouvelle demande de type ${body.type}`
-      }
+        message: `${employee.name} de votre equipe a soumis une nouvelle demande de type ${body.type}`,
+      },
     })
   }
+
+  logAudit({
+    actorId: user.id,
+    actorName: employee.name,
+    action: "CREATED",
+    entity: "Request",
+    entityId: request.id,
+    details: {
+      type: request.type,
+      status: request.status,
+      startDate: request.startDate?.toISOString() ?? null,
+      endDate: request.endDate?.toISOString() ?? null,
+    },
+  })
 
   return NextResponse.json(request)
 }

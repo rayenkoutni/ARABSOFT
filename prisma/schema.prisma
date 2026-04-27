@@ -7,121 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Employee {
-  id           String      @id @default(uuid())
-  name         String
-  email        String      @unique
-  password     String
-  role         Role
-  department   String?
-  position     String?
-  managerId    String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-
-  manager      Employee?   @relation("ManagerEmployees", fields: [managerId], references: [id])
-  team         Employee[]  @relation("ManagerEmployees")
-  requests     Request[]   @relation("EmployeeRequests")
-  tasks        Task[]      @relation("AssigneeTasks")
-  evaluations  Evaluation[]
-  auditLogs    AuditLog[]
-  notifications Notification[]
-}
-
-model Request {
-  id           String        @id @default(uuid())
-  type         RequestType
-  approvalType ApprovalType
-  status       RequestStatus @default(EN_ATTENTE_CHEF)
-  employeeId   String
-  managerId    String?
-  comment      String?
-  slaDeadline  DateTime?
-  slaBreached  Boolean       @default(false)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-
-  employee     Employee      @relation("EmployeeRequests", fields: [employeeId], references: [id])
-  history      RequestHistory[]
-}
-
-model RequestHistory {
-  id         String   @id @default(uuid())
-  requestId  String
-  actorId    String
-  actorName  String
-  action     String
-  comment    String?
-  createdAt  DateTime @default(now())
-
-  request    Request  @relation(fields: [requestId], references: [id])
-}
-
-model Task {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  status      String   @default("TODO")
-  priority    String   @default("MEDIUM")
-  assigneeId  String
-  projectId   String?
-  dueDate     DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  assignee    Employee @relation("AssigneeTasks", fields: [assigneeId], references: [id])
-  project     Project? @relation(fields: [projectId], references: [id])
-}
-
-model Project {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  progress    Int      @default(0)
-  managerId   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  tasks       Task[]
-}
-
-model Evaluation {
-  id           String   @id @default(uuid())
-  employeeId   String
-  evaluatorId  String
-  score        Float
-  period       String
-  objectives   String?
-  comments     String?
-  status       String   @default("DRAFT")
-  createdAt    DateTime @default(now())
-
-  employee     Employee @relation(fields: [employeeId], references: [id])
-}
-
-model Notification {
-  id         String   @id @default(uuid())
-  employeeId String
-  title      String
-  message    String
-  read       Boolean  @default(false)
-  createdAt  DateTime @default(now())
-
-  employee   Employee @relation(fields: [employeeId], references: [id])
-}
-
-model AuditLog {
-  id         String   @id @default(uuid())
-  actorId    String
-  action     String
-  entity     String
-  entityId   String
-  details    String?
-  createdAt  DateTime @default(now())
-
-  actor      Employee @relation(fields: [actorId], references: [id])
-}
-
 enum Role {
   COLLABORATEUR
   CHEF
@@ -146,4 +31,366 @@ enum RequestStatus {
 enum ApprovalType {
   CHEF_THEN_RH
   DIRECT_RH
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ProjectStatus {
+  EN_ATTENTE
+  EN_COURS
+  TERMINE
+}
+
+enum EvaluationStatus {
+  DRAFT
+  SUBMITTED
+  VALIDATED
+  REJECTED
+}
+
+enum ConversationType {
+  PRIVATE
+  GROUP
+}
+
+enum SkillType {
+  SOFT
+  TECHNICAL
+}
+
+enum EmployeeSkillHistoryAction {
+  ADD
+  LEVEL_UPDATE
+  REMOVE
+}
+
+model Employee {
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  password     String
+  phone        String?
+  avatar       String?
+  otpCode      String?
+  otpExpiresAt DateTime?
+  role         Role
+  department   String?
+  position     String?
+  managerId    String?
+  hireDate     DateTime
+  leaveBalance Float     @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  manager              Employee?          @relation("ManagerEmployees", fields: [managerId], references: [id])
+  team                 Employee[]         @relation("ManagerEmployees")
+  requests             Request[]          @relation("EmployeeRequests")
+  assignedTasks        Task[]             @relation("AssigneeTasks")
+  reviewedTasks        Task[]             @relation("TaskReview")
+  evaluations          Evaluation[]       @relation("EmployeeEvaluations")
+  givenEvaluations     Evaluation[]       @relation("EvaluatorEvaluations")
+  validatedEvaluations Evaluation[]       @relation("ValidatedEvaluations")
+  notifications        Notification[]     @relation("EmployeeNotifications")
+  managedProjects      Project[]          @relation("ProjectManager")
+  createdProjects      Project[]          @relation("ProjectCreator")
+  teamProjects         Project[]          @relation("ProjectTeam")
+  skills               EmployeeSkill[]
+  skillHistoryEntries  EmployeeSkillHistory[] @relation("EmployeeSkillHistoryEmployee")
+  skillHistoryActions  EmployeeSkillHistory[] @relation("EmployeeSkillHistoryActor")
+  conversations        Conversation[]     @relation("ConversationParticipants")
+  sentMessages         Message[]          @relation("MessageSender")
+  messageReads         MessageRead[]      @relation("MessageReader")
+}
+
+model Request {
+  id            String        @id @default(uuid())
+  type          RequestType
+  approvalType  ApprovalType
+  status        RequestStatus @default(BROUILLON)
+  employeeId    String
+  managerId     String?
+  comment       String?
+  reason        String?
+  startDate     DateTime?
+  endDate       DateTime?
+  amount        Float?
+  documentType  String?
+  slaDeadline   DateTime?
+  slaBreached   Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  employee      Employee      @relation("EmployeeRequests", fields: [employeeId], references: [id])
+  history       RequestHistory[]
+}
+
+model RequestHistory {
+  id         String   @id @default(uuid())
+  requestId  String
+  actorId    String
+  actorName  String
+  action     String
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  request    Request  @relation(fields: [requestId], references: [id])
+}
+
+model Task {
+  id                 String      @id @default(uuid())
+  title              String
+  description        String?
+  status             TaskStatus  @default(TODO)
+  priority           TaskPriority @default(MEDIUM)
+  assigneeId         String
+  projectId          String?
+  dueDate            DateTime?
+  submittedForReview Boolean     @default(false)
+  reviewComment      String?
+  reviewedById       String?
+  reviewedAt         DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  assignee           Employee           @relation("AssigneeTasks", fields: [assigneeId], references: [id])
+  project            Project?           @relation(fields: [projectId], references: [id])
+  reviewedBy         Employee?          @relation("TaskReview", fields: [reviewedById], references: [id])
+  requiredSkills     TaskRequiredSkill[]
+}
+
+model Project {
+  id              String        @id @default(uuid())
+  name            String
+  description     String?
+  progress        Int           @default(0)
+  managerId       String?
+  createdById     String?
+  createdByRole   Role?
+  status          ProjectStatus @default(EN_COURS)
+  priority        String        @default("MEDIUM")
+  startDate       DateTime?
+  endDate         DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  manager         Employee?     @relation("ProjectManager", fields: [managerId], references: [id])
+  creator         Employee?     @relation("ProjectCreator", fields: [createdById], references: [id])
+  tasks           Task[]
+  team            Employee[]    @relation("ProjectTeam")
+  changeHistory   ProjectChangeHistory[]
+}
+
+model ProjectChangeHistory {
+  id         String   @id @default(uuid())
+  projectId  String
+  actorId    String
+  actorName  String
+  action     String
+  oldValues  String?
+  newValues  String?
+  approved   Boolean  @default(false)
+  approvedBy String?
+  createdAt  DateTime @default(now())
+
+  project    Project  @relation(fields: [projectId], references: [id])
+}
+
+model Skill {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  type         SkillType
+  isMandatory  Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  description  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  employees    EmployeeSkill[]
+  history      EmployeeSkillHistory[]
+  positions    PositionSkill[]
+  requiredByTasks TaskRequiredSkill[]
+
+  @@index([type, isMandatory, isActive])
+}
+
+model TaskRequiredSkill {
+  id           String   @id @default(uuid())
+  taskId       String
+  skillId      String
+  minimumLevel Int
+  createdAt    DateTime @default(now())
+
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  skill        Skill    @relation(fields: [skillId], references: [id])
+
+  @@unique([taskId, skillId])
+  @@index([taskId])
+  @@index([skillId])
+}
+
+model EmployeeSkill {
+  id            String    @id @default(uuid())
+  employeeId    String
+  skillId       String
+  level         Int
+  acquiredAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  employee      Employee  @relation(fields: [employeeId], references: [id])
+  skill         Skill     @relation(fields: [skillId], references: [id])
+
+  @@unique([employeeId, skillId])
+  @@index([employeeId])
+  @@index([skillId])
+}
+
+model EmployeeSkillHistory {
+  id          String                    @id @default(uuid())
+  employeeId  String
+  skillId     String?
+  skillName   String
+  skillType   SkillType
+  action      EmployeeSkillHistoryAction
+  oldLevel    Int?
+  newLevel    Int?
+  comment     String?
+  actorId     String
+  createdAt   DateTime                  @default(now())
+
+  employee    Employee                  @relation("EmployeeSkillHistoryEmployee", fields: [employeeId], references: [id])
+  skill       Skill?                    @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  actor       Employee                  @relation("EmployeeSkillHistoryActor", fields: [actorId], references: [id])
+
+  @@index([employeeId, createdAt])
+  @@index([skillId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model Position {
+  id          String   @id @default(uuid())
+  title       String
+  department  String?
+  description String?
+  createdAt   DateTime @default(now())
+
+  skills      PositionSkill[]
+}
+
+model PositionSkill {
+  id            String   @id @default(uuid())
+  positionId    String
+  skillId       String
+  requiredLevel Int
+  createdAt     DateTime @default(now())
+
+  position      Position @relation(fields: [positionId], references: [id])
+  skill         Skill    @relation(fields: [skillId], references: [id])
+
+  @@unique([positionId, skillId])
+}
+
+model Evaluation {
+  id            String           @id @default(uuid())
+  employeeId    String
+  evaluatorId   String
+  validatedById String?
+  period        String
+  status        EvaluationStatus @default(DRAFT)
+  comments      String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  employee      Employee         @relation("EmployeeEvaluations", fields: [employeeId], references: [id])
+  evaluator     Employee         @relation("EvaluatorEvaluations", fields: [evaluatorId], references: [id])
+  validatedBy   Employee?        @relation("ValidatedEvaluations", fields: [validatedById], references: [id])
+  objectives    EvaluationObjective[]
+}
+
+model EvaluationObjective {
+  id           String  @id @default(uuid())
+  evaluationId String
+  title        String
+  target       String
+  result       String?
+  score        Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id])
+}
+
+model SlaConfig {
+  id           String      @id @default(uuid())
+  requestType  RequestType @unique
+  maxHours     Int
+  description  String?
+  createdAt    DateTime    @default(now())
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  employeeId  String
+  title       String
+  message     String
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  employee    Employee @relation("EmployeeNotifications", fields: [employeeId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  actorName  String
+  action     String
+  entity     String
+  entityId   String
+  details    String?
+  createdAt  DateTime @default(now())
+}
+
+model Conversation {
+  id          String           @id @default(uuid())
+  type        ConversationType
+  name        String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  participants Employee[]      @relation("ConversationParticipants")
+  messages     Message[]
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  content        String
+  senderId       String
+  conversationId String
+  createdAt      DateTime     @default(now())
+
+  sender         Employee     @relation("MessageSender", fields: [senderId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  reads          MessageRead[]
+}
+
+model MessageRead {
+  messageId  String
+  employeeId String
+  readAt     DateTime @default(now())
+
+  message    Message   @relation(fields: [messageId], references: [id])
+  employee   Employee  @relation("MessageReader", fields: [employeeId], references: [id])
+
+  @@id([messageId, employeeId])
 }

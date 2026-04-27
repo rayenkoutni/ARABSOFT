@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/auth-context'
-import { requestService } from '@/lib/request-service'
+import { useAuth } from '@/lib'
+import { requestService } from '@/lib'
 import { Request } from '@/lib/types'
 import { StatCard } from '@/components/stat-card'
 import { RequestCard } from '@/components/request-card'
@@ -15,9 +15,23 @@ import {
   XCircle,
   Plus,
   TrendingUp,
+  AlertTriangle,
 } from 'lucide-react'
 import Link from 'next/link'
 import { BrandedLoading } from '@/components/ui/spinner'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+
+interface SlaStats {
+  breachedThisMonth: number
+  breachByType: { type: string; _count: { type: number } }[]
+}
+
+const typeLabels: Record<string, string> = {
+  CONGE: 'Congé',
+  AUTORISATION: 'Autorisation',
+  DOCUMENT: 'Document',
+  PRET: 'Prêt',
+}
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -28,6 +42,7 @@ export default function DashboardPage() {
     approvedRequests: 0,
     rejectedRequests: 0,
   })
+  const [slaStats, setSlaStats] = useState<SlaStats | null>(null)
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
@@ -38,22 +53,23 @@ export default function DashboardPage() {
       try {
         setIsLoading(true)
 
-        // Load stats — unchanged for all roles
         const statsData = await requestService.getDashboardStats(user.id, user.role)
         setStats(statsData)
 
-        // Load requests based on role
+        if (user.role === 'RH') {
+          const res = await fetch('/api/sla/stats')
+          if (res.ok) setSlaStats(await res.json())
+        }
+
         let requestsData: Request[] = []
         if (user.role === 'RH') {
           requestsData = await requestService.getAllRequests()
         } else if (user.role === 'CHEF') {
-          // Only EN_ATTENTE_CHEF + CHEF_THEN_RH requests — the actionable pending ones
           requestsData = await requestService.getManagerPendingRequests(user.id)
         } else {
           requestsData = await requestService.getUserRequests(user.id)
         }
 
-        // Limit to 5 most recent
         setRequests(requestsData.slice(0, 5))
       } finally {
         setIsLoading(false)
@@ -66,9 +82,9 @@ export default function DashboardPage() {
   if (!user) return null
 
   const dashboardTitle = {
-    RH: 'HR Dashboard',
-    CHEF: 'Manager Dashboard',
-    COLLABORATEUR: 'Employee Dashboard',
+    RH: 'Tableau de bord RH',
+    CHEF: 'Tableau de bord Manager',
+    COLLABORATEUR: 'Tableau de bord employe',
   }[user.role]
 
   // Navigate to My Approvals and pre-open the modal for the selected request
@@ -90,14 +106,14 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-3xl font-bold" style={{ color: 'var(--color-text)' }}>{dashboardTitle}</h1>
           <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            Welcome back, {user.name}
+            Bon retour, {user.name}
           </p>
         </div>
         {user.role === 'COLLABORATEUR' && (
           <Link href="/dashboard/new-request">
             <Button className="gap-2" style={{ backgroundColor: '#2563B0', color: 'white' }}>
               <Plus className="h-4 w-4" />
-              New Request
+             Nouvelle demande
             </Button>
           </Link>
         )}
@@ -106,38 +122,64 @@ export default function DashboardPage() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="Total Requests"
+          label="Total des demandes"
           value={stats.totalRequests}
           icon={BarChart3}
           trend={{ direction: 'up', percentage: 12 }}
         />
         <StatCard
-          label="Pending"
+          label="En attente"
           value={stats.pendingRequests}
           icon={Clock}
         />
         <StatCard
-          label="Approved"
+          label="Approuvees"
           value={stats.approvedRequests}
           icon={CheckCircle2}
           trend={{ direction: 'up', percentage: 8 }}
         />
         <StatCard
-          label="Rejected"
+          label="Rejetees"
           value={stats.rejectedRequests}
           icon={XCircle}
         />
+        {user.role === 'RH' && slaStats && (
+          <StatCard
+            label="SLA dépassés (mois)"
+            value={slaStats.breachedThisMonth}
+            icon={AlertTriangle}
+          />
+        )}
       </div>
+
+      {/* SLA Chart - RH only */}
+      {user.role === 'RH' && slaStats && slaStats.breachByType.length > 0 && (
+        <div className="bg-card rounded-lg p-4 border">
+          <h3 className="text-sm font-medium mb-4" style={{ color: 'var(--color-text)' }}>
+            SLA dépassés par type (ce mois)
+          </h3>
+          <div className="h-40">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={slaStats.breachByType.map((b) => ({ name: typeLabels[b.type] || b.type, count: b._count.type }))}>
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#EF4444" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {/* Recent / Pending Requests */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>
             {user.role === 'RH'
-              ? 'Recent Requests'
+              ? 'Demandes recentes'
               : user.role === 'CHEF'
-                ? 'Pending Approvals'
-                : 'My Recent Requests'}
+                ? 'Approbations en attente'
+                : 'Mes demandes recentes'}
           </h2>
           <Link href={
             user.role === 'RH'
@@ -147,7 +189,7 @@ export default function DashboardPage() {
                 : '/dashboard/my-requests'
           }>
             <Button variant="outline" size="sm">
-              View All
+              Voir tout
             </Button>
           </Link>
         </div>

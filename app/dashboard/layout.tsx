@@ -1,9 +1,10 @@
 'use client'
 
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib'
 import { useRouter } from 'next/navigation'
 import { Navigation } from '@/components/navigation'
 import { Sidebar } from '@/components/sidebar'
+import { GlobalMessageHandler } from '@/components/global-message-handler'
 import { useEffect } from 'react'
 import { BrandedLoading } from '@/components/ui/spinner'
 
@@ -12,14 +13,18 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { isAuthenticated, isLoading } = useAuth()
+  const { isAuthenticated, isOtpVerified, isLoading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push('/')
+    if (!isLoading) {
+      if (!isAuthenticated) {
+        router.push('/')
+      } else if (!isOtpVerified) {
+        router.push('/')
+      }
     }
-  }, [isAuthenticated, isLoading, router])
+  }, [isAuthenticated, isOtpVerified, isLoading, router])
 
   if (isLoading) {
     return (
@@ -36,6 +41,7 @@ export default function DashboardLayout({
   return (
     <div className="flex flex-col h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
       <Navigation />
+      <GlobalMessageHandler />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-auto">

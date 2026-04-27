@@ -1,0 +1,25 @@
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Loaded Prisma config from prisma.config.ts.
+
+warn The Prisma config file in prisma.config.ts overrides the deprecated `package.json#prisma` property in package.json.
+  For more information, see: https://pris.ly/prisma-config
+
+Prisma config detected, skipping environment variable loading.
+node:internal/child_process:421
+    throw new ErrnoException(err, 'spawn');
+          ^
+
+Error: spawn EPERM
+    at ChildProcess.spawn (node:internal/child_process:421:11)
+    at spawn (node:child_process:796:9)
+    at Object.fork (node:child_process:174:10)
+    at spawn (C:\Users\baalo\Music\pfe\backup\arabsoft\ARABSOFT\node_modules\prisma\build\index.js:49:66031)
+    at check (C:\Users\baalo\Music\pfe\backup\arabsoft\ARABSOFT\node_modules\prisma\build\index.js:49:65222) {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'spawn'
+}
+
+Node.js v24.11.0

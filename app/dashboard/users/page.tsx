@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,19 +30,69 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Checkbox } from '@/components/ui/checkbox'
-import { User, UserPlus, Copy, CheckCircle2, Pencil, Trash2, KeyRound } from 'lucide-react'
+import { User, UserPlus, KeyRound, CheckCircle2, Pencil, Trash2 } from 'lucide-react'
 import { BrandedLoading } from '@/components/ui/spinner'
+import {
+  EmployeeCreateDialog,
+  getDefaultEmployeeCreateFormData,
+  type EmployeeCreateFormData,
+} from '@/components/users/employee-create-dialog'
+import {
+  createEmptyTechnicalSkillRow,
+  hasDuplicateTechnicalSkills,
+  mapTechnicalSkillCatalogItems,
+  type TechnicalSkillCatalogItem,
+} from '@/lib/skills/client'
 
 interface Employee {
   id: string
   name: string
   email: string
+  phone: string | null
   role: string
   department: string | null
   position: string | null
   managerId: string | null
+  hireDate: string
+  leaveBalance: number
   onLeave: boolean
+  avatar: string | null
+}
+
+function mapEmployeeListResponse(payload: unknown): Employee[] {
+  if (!Array.isArray(payload)) {
+    return []
+  }
+
+  return payload
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : '',
+      name: typeof item.name === 'string' ? item.name : '',
+      email: typeof item.email === 'string' ? item.email : '',
+      phone: typeof item.phone === 'string' ? item.phone : null,
+      role: typeof item.role === 'string' ? item.role : '',
+      department: typeof item.department === 'string' ? item.department : null,
+      position: typeof item.position === 'string' ? item.position : null,
+      managerId: typeof item.managerId === 'string' ? item.managerId : null,
+      hireDate: typeof item.hireDate === 'string' ? item.hireDate : '',
+      leaveBalance: typeof item.leaveBalance === 'number' ? item.leaveBalance : 0,
+      onLeave: Boolean(item.onLeave),
+      avatar: typeof item.avatar === 'string' ? item.avatar : null,
+    }))
+    .filter((employee) => employee.id && employee.name && employee.email)
+}
+
+function getTodayDateInputMax() {
+  const now = new Date()
+  const year = String(now.getFullYear())
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isFutureDateInputValue(value: string) {
+  return Boolean(value) && value > getTodayDateInputMax()
 }
 
 const roleColors: Record<string, { style: React.CSSProperties }> = {
@@ -60,14 +110,38 @@ const roleLabels: Record<string, string> = {
 export default function UsersPage() {
   const { user } = useAuth()
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [technicalSkillsCatalog, setTechnicalSkillsCatalog] = useState<TechnicalSkillCatalogItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isSkillsLoading, setIsSkillsLoading] = useState(false)
+
+  const getInitials = (name: string) => {
+    return name.split(' ').map((n) => n[0]).join('').toUpperCase().substring(0, 2)
+  }
+
+  const AvatarDisplay = ({ employee }: { employee: Employee }) => {
+    if (employee.avatar) {
+      return (
+        <img 
+          src={employee.avatar} 
+          alt={employee.name}
+          className="w-8 h-8 rounded-full object-cover"
+        />
+      )
+    }
+    
+    return (
+      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-sm font-medium">
+        {getInitials(employee.name)}
+      </div>
+    )
+  }
 
   // Add dialog
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [listError, setListError] = useState('')
   const [error, setError] = useState('')
   const [successInfo, setSuccessInfo] = useState<{ name: string; email: string; message: string } | null>(null)
-  const [copied, setCopied] = useState(false)
 
   // Edit dialog
   const [editEmployee, setEditEmployee] = useState<Employee | null>(null)
@@ -78,42 +152,71 @@ export default function UsersPage() {
   const [isDeleting, setIsDeleting] = useState(false)
 
   // Password reset result
-  const [resetInfo, setResetInfo] = useState<{ name: string; tempPassword: string } | null>(null)
+  const [resetInfo, setResetInfo] = useState<{ name: string; message: string } | null>(null)
 
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    role: '',
-    department: '',
-    position: '',
-    managerId: '',
-    subordinateIds: [] as string[],
-  })
+  const [formData, setFormData] = useState<EmployeeCreateFormData>(getDefaultEmployeeCreateFormData)
 
   const [editFormData, setEditFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     role: '',
     department: '',
     position: '',
     managerId: '',
+    hireDate: '',
   })
+  const hireDateMax = getTodayDateInputMax()
+
+  const toDateInputValue = (value: string | null | undefined) => {
+    if (!value) return ''
+
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return ''
+    }
+
+    return parsed.toISOString().slice(0, 10)
+  }
 
   const loadEmployees = async () => {
     try {
       setIsLoading(true)
+      setListError('')
       const res = await fetch('/api/employees')
       if (res.ok) {
         const data = await res.json()
-        setEmployees(Array.isArray(data) ? data : [data])
+        setEmployees(mapEmployeeListResponse(data))
+        return
       }
+      setEmployees([])
+      setListError("Impossible de charger la liste des collaborateurs")
+    } catch {
+      setEmployees([])
+      setListError("Impossible de charger la liste des collaborateurs")
     } finally {
       setIsLoading(false)
     }
   }
 
+  const loadTechnicalSkillsCatalog = async () => {
+    try {
+      setIsSkillsLoading(true)
+      const res = await fetch('/api/skills?type=TECHNICAL', { cache: 'no-store' })
+      if (res.ok) {
+        const data = await res.json()
+        setTechnicalSkillsCatalog(mapTechnicalSkillCatalogItems(data))
+      }
+    } finally {
+      setIsSkillsLoading(false)
+    }
+  }
+
   useEffect(() => {
-    if (user) loadEmployees()
+    if (user) {
+      loadEmployees()
+      loadTechnicalSkillsCatalog()
+    }
   }, [user])
 
   if (!user || user.role !== 'RH') {
@@ -125,29 +228,56 @@ export default function UsersPage() {
   }
 
   const chefs = employees.filter(e => e.role === 'CHEF')
+  const collaborators = employees.filter(e => e.role === 'COLLABORATEUR')
 
   // ── CREATE ───────────────────────────────────────────────
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    if (!formData.name || !formData.email || !formData.role) {
-      setError("Le nom, l'email et le rôle sont obligatoires")
+    if (!formData.name || !formData.email || !formData.role || !formData.hireDate) {
+      setError("Le nom, l'email, le rôle et la date d'embauche sont obligatoires")
+      return
+    }
+
+    if (isFutureDateInputValue(formData.hireDate)) {
+      setError("La date d'embauche ne peut pas être dans le futur")
       return
     }
 
     try {
+      if (formData.role === 'COLLABORATEUR') {
+        const selectedTechnicalSkills = formData.technicalSkills.filter((skill) => skill.skillId)
+
+        if (selectedTechnicalSkills.length < 2) {
+          setError('Un collaborateur doit avoir au moins 2 competences techniques')
+          return
+        }
+
+        if (hasDuplicateTechnicalSkills(formData.technicalSkills)) {
+          setError('Une competence technique ne peut etre selectionnee qu une seule fois')
+          return
+        }
+      }
+
       setIsSubmitting(true)
       const res = await fetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          managerId: formData.managerId || null,
+          technicalSkills:
+            formData.role === 'COLLABORATEUR'
+              ? formData.technicalSkills.filter((skill) => skill.skillId)
+              : [],
+        })
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || 'Erreur lors de la création'); return }
 
       setSuccessInfo({ name: data.name, email: data.email, message: data.message })
-      setFormData({ name: '', email: '', role: '', department: '', position: '', managerId: '', subordinateIds: [] })
+      setFormData(getDefaultEmployeeCreateFormData())
       loadEmployees()
     } catch { setError('Erreur de connexion au serveur') }
     finally { setIsSubmitting(false) }
@@ -159,10 +289,12 @@ export default function UsersPage() {
     setEditFormData({
       name: emp.name,
       email: emp.email,
+      phone: emp.phone || '',
       role: emp.role,
       department: emp.department || '',
       position: emp.position || '',
       managerId: emp.managerId || '',
+      hireDate: toDateInputValue(emp.hireDate),
     })
     setEditError('')
   }
@@ -172,12 +304,25 @@ export default function UsersPage() {
     if (!editEmployee) return
     setEditError('')
 
+    if (!editFormData.hireDate) {
+      setEditError("La date d'embauche est obligatoire")
+      return
+    }
+
+    if (isFutureDateInputValue(editFormData.hireDate)) {
+      setEditError("La date d'embauche ne peut pas être dans le futur")
+      return
+    }
+
     try {
       setIsSubmitting(true)
       const res = await fetch(`/api/employees/${editEmployee.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editFormData)
+        body: JSON.stringify({
+          ...editFormData,
+          managerId: editFormData.managerId || null,
+        })
       })
       const data = await res.json()
       if (!res.ok) { setEditError(data.error || 'Erreur lors de la modification'); return }
@@ -198,9 +343,9 @@ export default function UsersPage() {
         body: JSON.stringify({ resetPassword: true })
       })
       const data = await res.json()
-      if (res.ok && data.tempPassword) {
+      if (res.ok && data.message) {
         setEditEmployee(null)
-        setResetInfo({ name: data.name, tempPassword: data.tempPassword })
+        setResetInfo({ name: data.name, message: data.message })
       }
     } finally { setIsSubmitting(false) }
   }
@@ -219,10 +364,23 @@ export default function UsersPage() {
   }
 
   // ── HELPERS ──────────────────────────────────────────────
-  const handleCopyPassword = (pw: string) => {
-    navigator.clipboard.writeText(pw)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const addTechnicalSkill = () => {
+    setFormData((current) => ({
+      ...current,
+      technicalSkills:
+        current.technicalSkills.length >= technicalSkillsCatalog.length
+          ? current.technicalSkills
+          : [...current.technicalSkills, createEmptyTechnicalSkillRow()],
+    }))
+  }
+
+  const removeTechnicalSkill = (index: number) => {
+    if (index < 2) return
+
+    setFormData((current) => ({
+      ...current,
+      technicalSkills: current.technicalSkills.filter((_, rowIndex) => rowIndex !== index),
+    }))
   }
 
   const closeAllDialogs = () => {
@@ -233,7 +391,7 @@ export default function UsersPage() {
     setResetInfo(null)
     setError('')
     setEditError('')
-    setCopied(false)
+    setFormData(getDefaultEmployeeCreateFormData())
   }
 
   const onLeaveCount = employees.filter(e => e.onLeave).length
@@ -258,29 +416,41 @@ export default function UsersPage() {
         </Button>
       </div>
 
+      {listError && (
+        <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}>
+          {listError}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-center py-12"><BrandedLoading /></div>
       ) : (
         <>
           <Card>
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nom</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Rôle</TableHead>
-                  <TableHead>Département</TableHead>
-                  <TableHead>Statut</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
+               <TableHeader>
+                 <TableRow>
+                   <TableHead className="w-12"></TableHead>
+                   <TableHead>Nom</TableHead>
+                   <TableHead>Email</TableHead>
+                   <TableHead>Téléphone</TableHead>
+                   <TableHead>Rôle</TableHead>
+                   <TableHead>Département</TableHead>
+                   <TableHead>Statut</TableHead>
+                   <TableHead className="text-right">Actions</TableHead>
+                 </TableRow>
+               </TableHeader>
               <TableBody>
                 {employees.map((emp) => {
                   const roleColor = roleColors[emp.role] || roleColors.COLLABORATEUR
                   return (
-                    <TableRow key={emp.id}>
-                      <TableCell className="font-medium">{emp.name}</TableCell>
-                      <TableCell>{emp.email}</TableCell>
+                     <TableRow key={emp.id}>
+                       <TableCell>
+                         <AvatarDisplay employee={emp} />
+                       </TableCell>
+                       <TableCell className="font-medium">{emp.name}</TableCell>
+                       <TableCell>{emp.email}</TableCell>
+                      <TableCell>{emp.phone || '—'}</TableCell>
                       <TableCell>
                         <Badge className="border-0" style={roleColor.style}>
                           {roleLabels[emp.role] || emp.role}
@@ -362,94 +532,23 @@ export default function UsersPage() {
       )}
 
       {/* ─── CREATE DIALOG ─────────────────────────────────── */}
-      <Dialog open={showAddDialog && !successInfo} onOpenChange={(open) => { if (!open) closeAllDialogs() }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Ajouter un collaborateur</DialogTitle>
-            <DialogDescription>
-              Remplissez les informations pour créer un nouveau compte. Un mot de passe temporaire sera généré automatiquement.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            {error && <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}>{error}</div>}
-            <div className="space-y-2">
-              <Label>Nom complet *</Label>
-              <Input placeholder="ex: Jean Dupont" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
-            </div>
-            <div className="space-y-2">
-              <Label>Adresse email *</Label>
-              <Input type="email" placeholder="ex: jean.dupont@company.com" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} required />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Rôle *</Label>
-                <Select value={formData.role} onValueChange={v => setFormData({ ...formData, role: v })}>
-                  <SelectTrigger><SelectValue placeholder="Sélectionner" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="COLLABORATEUR">Collaborateur</SelectItem>
-                    <SelectItem value="CHEF">Chef</SelectItem>
-                    <SelectItem value="RH">RH</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Département</Label>
-                <Input placeholder="ex: Engineering" value={formData.department} onChange={e => setFormData({ ...formData, department: e.target.value })} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Poste</Label>
-              <Input placeholder="ex: Développeur Full-Stack" value={formData.position} onChange={e => setFormData({ ...formData, position: e.target.value })} />
-            </div>
-            {(formData.role === 'COLLABORATEUR' || formData.role === '') && (
-              <div className="space-y-2">
-                <Label>Chef (Manager)</Label>
-                <Select value={formData.managerId} onValueChange={v => setFormData({ ...formData, managerId: v })}>
-                  <SelectTrigger><SelectValue placeholder="Sélectionner un chef" /></SelectTrigger>
-                  <SelectContent>
-                    {chefs.map(c => <SelectItem key={c.id} value={c.id}>{c.name} — {c.department || 'N/A'}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {formData.role === 'CHEF' && (
-              <div className="space-y-2">
-                <Label>Affecter des collaborateurs (Subordonnés)</Label>
-                <div className="rounded-md border p-2 space-y-1 max-h-40 overflow-y-auto" style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-border)' }}>
-                  {employees.filter(e => e.role === 'COLLABORATEUR').map(emp => (
-                    <div key={emp.id} className="flex items-center space-x-2 p-1 hover:bg-muted/50 rounded transition-colors">
-                      <Checkbox 
-                        id={`sub-${emp.id}`}
-                        checked={formData.subordinateIds.includes(emp.id)}
-                        onCheckedChange={(checked: boolean) => {
-                          const newIds = checked 
-                            ? [...formData.subordinateIds, emp.id]
-                            : formData.subordinateIds.filter(id => id !== emp.id)
-                          setFormData({ ...formData, subordinateIds: newIds })
-                        }}
-                      />
-                      <label htmlFor={`sub-${emp.id}`} className="text-sm font-medium cursor-pointer flex-1">
-                        {emp.name} <span className="text-xs text-muted-foreground ml-1">({emp.department || 'N/A'})</span>
-                      </label>
-                    </div>
-                  ))}
-                  {employees.filter(e => e.role === 'COLLABORATEUR').length === 0 && (
-                    <p className="text-xs text-center py-2 text-muted-foreground">Aucun collaborateur disponible</p>
-                  )}
-                </div>
-              </div>
-            )}
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={closeAllDialogs}>Annuler</Button>
-              <Button type="submit" disabled={isSubmitting} style={{ backgroundColor: 'var(--color-brand-blue)', color: 'white' }}>
-                {isSubmitting ? 'Création...' : 'Créer le compte'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <EmployeeCreateDialog
+        open={showAddDialog && !successInfo}
+        error={error}
+        isSubmitting={isSubmitting}
+        isSkillsLoading={isSkillsLoading}
+        formData={formData}
+        chefs={chefs}
+        collaborators={collaborators}
+        technicalSkillsCatalog={technicalSkillsCatalog}
+        onOpenChange={(open) => { if (!open) closeAllDialogs() }}
+        onSubmit={handleCreate}
+        onFormDataChange={setFormData}
+        onAddTechnicalSkill={addTechnicalSkill}
+        onRemoveTechnicalSkill={removeTechnicalSkill}
+      />
 
-      {/* ─── CREATE SUCCESS ──────────────────────────────────── */}
+      {/* CREATE SUCCESS */}
       <Dialog open={!!successInfo} onOpenChange={(open) => { if (!open) closeAllDialogs() }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -496,16 +595,29 @@ export default function UsersPage() {
             {editError && <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}>{editError}</div>}
             <div className="space-y-2">
               <Label>Nom complet</Label>
-              <Input value={editFormData.name} onChange={e => setEditFormData({ ...editFormData, name: e.target.value })} required />
+              <Input value={editFormData.name || ''} onChange={e => setEditFormData({ ...editFormData, name: e.target.value })} required />
             </div>
             <div className="space-y-2">
               <Label>Adresse email</Label>
-              <Input type="email" value={editFormData.email} onChange={e => setEditFormData({ ...editFormData, email: e.target.value })} required />
+              <Input type="email" value={editFormData.email || ''} onChange={e => setEditFormData({ ...editFormData, email: e.target.value })} required />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Numéro de téléphone</Label>
+              <Input placeholder="ex: +216 XX XXX XXX" value={editFormData.phone || ''} onChange={e => setEditFormData({ ...editFormData, phone: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <Label>Rôle</Label>
-                <Select value={editFormData.role} onValueChange={v => setEditFormData({ ...editFormData, role: v })}>
+                <Select
+                  value={editFormData.role}
+                  onValueChange={v =>
+                    setEditFormData({
+                      ...editFormData,
+                      role: v,
+                      managerId: v === 'COLLABORATEUR' ? editFormData.managerId : '',
+                    })
+                  }
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="COLLABORATEUR">Collaborateur</SelectItem>
@@ -516,12 +628,27 @@ export default function UsersPage() {
               </div>
               <div className="space-y-2">
                 <Label>Département</Label>
-                <Input value={editFormData.department} onChange={e => setEditFormData({ ...editFormData, department: e.target.value })} />
+                <Input value={editFormData.department || ''} onChange={e => setEditFormData({ ...editFormData, department: e.target.value })} />
               </div>
             </div>
             <div className="space-y-2">
+              <Label>Date d&apos;embauche</Label>
+              <Input
+                type="date"
+                value={editFormData.hireDate || ''}
+                onChange={e => setEditFormData({ ...editFormData, hireDate: e.target.value })}
+                max={hireDateMax}
+                required
+              />
+              {isFutureDateInputValue(editFormData.hireDate) && (
+                <p className="text-sm" style={{ color: '#991B1B' }}>
+                  La date d&apos;embauche ne peut pas être dans le futur.
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
               <Label>Poste</Label>
-              <Input value={editFormData.position} onChange={e => setEditFormData({ ...editFormData, position: e.target.value })} />
+              <Input value={editFormData.position || ''} onChange={e => setEditFormData({ ...editFormData, position: e.target.value })} />
             </div>
             {editFormData.role === 'COLLABORATEUR' && (
               <div className="space-y-2">
@@ -587,26 +714,17 @@ export default function UsersPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <KeyRound className="h-5 w-5" style={{ color: '#F5A623' }} />
+              <CheckCircle2 className="h-5 w-5" style={{ color: '#10B981' }} />
               Mot de passe réinitialisé
             </DialogTitle>
-            <DialogDescription>
-              Nouveau mot de passe temporaire pour {resetInfo?.name} :
-            </DialogDescription>
           </DialogHeader>
           {resetInfo && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 rounded text-sm font-mono" style={{ backgroundColor: 'var(--color-hover)', color: 'var(--color-text)' }}>
-                  {resetInfo.tempPassword}
-                </code>
-                <Button size="sm" variant="outline" onClick={() => handleCopyPassword(resetInfo.tempPassword)} className="gap-1">
-                  {copied ? <CheckCircle2 className="h-3 w-3" style={{ color: '#10B981' }} /> : <Copy className="h-3 w-3" />}
-                  {copied ? 'Copié' : 'Copier'}
-                </Button>
+              <div className="p-4 rounded-lg" style={{ backgroundColor: '#D1FAE5', color: '#065F46' }}>
+                <p className="font-medium">{resetInfo.message}</p>
               </div>
               <DialogFooter>
-                <Button onClick={() => setResetInfo(null)} style={{ backgroundColor: 'var(--color-brand-blue)', color: 'white' }}>Terminé</Button>
+                <Button onClick={() => setResetInfo(null)} style={{ backgroundColor: 'var(--color-brand-blue)', color: 'white' }}>OK</Button>
               </DialogFooter>
             </div>
           )}

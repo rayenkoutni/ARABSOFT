@@ -1,8 +1,12 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono, Plus_Jakarta_Sans } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
-import { AuthProvider } from '@/lib/auth-context'
+import { AuthProvider } from '@/lib'
+import { NotificationProvider } from '@/lib/notification-context'
+import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
+
+export const runtime = "nodejs"
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
@@ -37,7 +41,10 @@ export default function RootLayout({
           }}
         />
         <AuthProvider>
-          {children}
+          <NotificationProvider>
+            {children}
+          </NotificationProvider>
+          <Toaster position="bottom-right" richColors />
         </AuthProvider>
         <Analytics />
       </body>

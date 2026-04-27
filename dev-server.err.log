@@ -1,0 +1,7 @@
+(node:10052) TimeoutNegativeWarning: -1777236455575 is a negative number.
+Timeout duration was set to 1.
+(Use `node --trace-warnings ...` to show where the warning was created)
+Erreur lors de la connexion : SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+    at JSON.parse (<anonymous>)
+Erreur lors de la connexion : SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+    at JSON.parse (<anonymous>)

@@ -1,14 +1,59 @@
-# Ignore configuration files
-.npmrc
-.snowflake/
-.vercel/
-next.user-config.*
+# dependencies
+node_modules
+.pnp
+.pnp.js
 
-# Environment variables
-.env*.local
+# testing
+coverage
 
-# Common ignores
-node_modules/
+# next.js
 .next/
+out/
+
+# production
+build
+dist
+
+# misc
 .DS_Store
-/lib/generated/prisma
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# prisma
+prisma/migrations
+!prisma/schema.prisma
+
+# docker
+.docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# build logs
+build_output*.txt
+tsc_output*.txt
+package-lock.json
+yarn.lock

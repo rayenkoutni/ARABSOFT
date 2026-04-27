@@ -2,19 +2,21 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useAuth } from '@/lib/auth-context'
+import { Plus, Search, X } from 'lucide-react'
 import { RequestCard } from '@/components/request-card'
+import { RequestDetailsSummary } from '@/components/request-details-summary'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useAuth } from '@/lib'
+import { requestService } from '@/lib'
 import { matchesRequestDateRange } from '@/lib/request-date-filter'
-import { requestService } from '@/lib/request-service'
 import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
-import { Plus, Search, X } from 'lucide-react'
 
 export default function MyRequestsPage() {
   const { user } = useAuth()
@@ -25,6 +27,7 @@ export default function MyRequestsPage() {
   const [selectedType, setSelectedType] = useState<string>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null)
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -204,7 +207,7 @@ export default function MyRequestsPage() {
           ) : filteredRequests.length > 0 ? (
             <div className="grid gap-4">
               {filteredRequests.map((request) => (
-                <RequestCard key={request.id} request={request} />
+                <RequestCard key={request.id} request={request} onView={(current) => setSelectedRequest(current)} />
               ))}
             </div>
           ) : (
@@ -214,6 +217,15 @@ export default function MyRequestsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
+        <DialogContent className="max-h-[80vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Details de la demande</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && <RequestDetailsSummary request={selectedRequest} />}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
