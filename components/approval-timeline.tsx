@@ -10,9 +10,14 @@ export function ApprovalTimeline({ history }: ApprovalTimelineProps) {
   const sorted = [...history].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
 
   const actionConfig: Record<string, { icon: React.ReactNode; label: string; bg: string }> = {
-    CREATED: { icon: <Clock className="h-5 w-5" style={{ color: '#F5A623' }} />, label: 'Demande créée', bg: 'rgba(245, 166, 35, 0.1)' },
-    APPROVE: { icon: <CheckCircle2 className="h-5 w-5" style={{ color: '#10B981' }} />, label: 'Approuvé', bg: 'rgba(16, 185, 129, 0.1)' },
-    REJECT: { icon: <XCircle className="h-5 w-5" style={{ color: '#EF4444' }} />, label: 'Rejeté', bg: 'rgba(239, 68, 68, 0.1)' },
+    CREATED: { icon: <Clock className="h-5 w-5" style={{ color: '#F5A623' }} />, label: 'Demande creee', bg: 'rgba(245, 166, 35, 0.1)' },
+    APPROVE: { icon: <CheckCircle2 className="h-5 w-5" style={{ color: '#10B981' }} />, label: 'Approuve', bg: 'rgba(16, 185, 129, 0.1)' },
+    REJECT: { icon: <XCircle className="h-5 w-5" style={{ color: '#EF4444' }} />, label: 'Rejete', bg: 'rgba(239, 68, 68, 0.1)' },
+    DOCUMENT_GENERATED: {
+      icon: <CheckCircle2 className="h-5 w-5" style={{ color: '#2563EB' }} />,
+      label: 'Document genere automatiquement',
+      bg: 'rgba(37, 99, 235, 0.1)',
+    },
   }
 
   return (
@@ -26,18 +31,18 @@ export function ApprovalTimeline({ history }: ApprovalTimelineProps) {
                 {config.icon}
               </div>
               {index < sorted.length - 1 && (
-                <div className="h-8 w-0.5 my-1" style={{ backgroundColor: 'var(--color-border)' }} />
+                <div className="my-1 h-8 w-0.5" style={{ backgroundColor: 'var(--color-border)' }} />
               )}
             </div>
 
             <div className="min-w-0 flex-1 pt-1">
-              <p className="font-medium wrap-anywhere" style={{ color: 'var(--color-text)' }}>{entry.actorName}</p>
-              <p className="text-sm wrap-anywhere" style={{ color: 'var(--color-text-muted)' }}>{config.label}</p>
-              <p className="mt-1 text-xs wrap-anywhere" style={{ color: 'var(--color-text-muted)' }}>
+              <p className="wrap-anywhere font-medium" style={{ color: 'var(--color-text)' }}>{entry.actorName}</p>
+              <p className="wrap-anywhere text-sm" style={{ color: 'var(--color-text-muted)' }}>{config.label}</p>
+              <p className="mt-1 wrap-anywhere text-xs" style={{ color: 'var(--color-text-muted)' }}>
                 {formatRequestDateTime(entry.createdAt)}
               </p>
               {entry.comment && (
-                <p className="mt-2 text-sm italic wrap-anywhere" style={{ color: 'var(--color-text)' }}>{`"${entry.comment}"`}</p>
+                <p className="mt-2 wrap-anywhere text-sm italic" style={{ color: 'var(--color-text)' }}>{`"${entry.comment}"`}</p>
               )}
             </div>
           </div>

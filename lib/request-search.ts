@@ -1,5 +1,6 @@
 import { parseRequestContent } from '@/lib/request-content'
 import { formatRequestDateTime } from '@/lib/request-date'
+import { getDocumentTypeLabel } from '@/lib/document-type'
 import { formatDateOnly, getLeaveDurationLabel, getLeaveImpactSummary, isLeaveRequestType } from '@/lib/leave-request'
 import { buildRequestWorkflowSteps, WorkflowStep } from '@/lib/request-workflow'
 import { Request } from '@/lib/types'
@@ -15,7 +16,7 @@ const requestStatusLabels: Record<string, string> = {
 const requestTypeLabels: Record<string, string> = {
   CONGE: 'Conge',
   AUTORISATION: 'Autorisation',
-  DOCUMENT: 'Document',
+  DOCUMENT: 'Document RH',
   PRET: 'Pret',
 }
 
@@ -36,6 +37,7 @@ export function formatWorkflowStepSearchText(step: WorkflowStep) {
 export function buildRequestCardSearchText(request: Request, currentUserId?: string) {
   const { title, description } = parseRequestContent(request)
   const workflowSteps = buildRequestWorkflowSteps(request, currentUserId)
+  const documentTypeLabel = request.type === 'DOCUMENT' ? getDocumentTypeLabel(request.documentType) : null
   const leaveImpact = getLeaveImpactSummary({
     startDate: request.startDate,
     endDate: request.endDate,
@@ -47,6 +49,7 @@ export function buildRequestCardSearchText(request: Request, currentUserId?: str
     `Description : ${description || 'Aucune description fournie'}`,
     request.type,
     requestTypeLabels[request.type] || request.type,
+    documentTypeLabel ? `Type de document : ${documentTypeLabel}` : '',
     request.employee?.name,
     request.status,
     requestStatusLabels[request.status] || request.status,

@@ -79,6 +79,9 @@ export default function RequestsPage() {
 
   const approvedCount = searchedRequests.filter((request) => request.status === 'APPROUVE').length
   const rejectedCount = searchedRequests.filter((request) => request.status === 'REJETE').length
+  const handleDownloadDocument = (request: Request) => {
+    window.open(requestService.getGeneratedDocumentDownloadUrl(request.id), '_blank', 'noopener,noreferrer')
+  }
 
   return (
     <div className="space-y-6">
@@ -189,7 +192,11 @@ export default function RequestsPage() {
           ) : filteredRequests.length > 0 ? (
             <div className="grid gap-4">
               {filteredRequests.map((request) => (
-                <RequestCard key={request.id} request={request} />
+                <RequestCard
+                  key={request.id}
+                  request={request}
+                  onDownload={handleDownloadDocument}
+                />
               ))}
             </div>
           ) : (

@@ -22,6 +22,7 @@ export type RequestStatus = 'BROUILLON' | 'EN_ATTENTE_CHEF' | 'EN_ATTENTE_RH' | 
 
 // Request type — matches Prisma enum
 export type RequestType = 'CONGE' | 'AUTORISATION' | 'DOCUMENT' | 'PRET'
+export type RequestDocumentType = 'ATTESTATION_TRAVAIL'
 
 // History entry from Prisma
 export interface RequestHistoryEntry {
@@ -46,6 +47,7 @@ export interface Request {
   reason?: string | null
   startDate?: string | null
   endDate?: string | null
+  documentType?: RequestDocumentType | null
   slaDeadline?: string | null
   slaBreached: boolean
   createdAt: string
@@ -56,6 +58,13 @@ export interface Request {
     email?: string
     leaveBalance?: number | null
     hireDate?: string | null
+  } | null
+  generatedDocument?: {
+    id: string
+    fileName: string
+    documentType: RequestDocumentType | string
+    reference: string
+    generatedAt: string
   } | null
   history: RequestHistoryEntry[]
 }

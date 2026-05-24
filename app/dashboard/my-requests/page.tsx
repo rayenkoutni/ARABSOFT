@@ -87,6 +87,9 @@ export default function MyRequestsPage() {
   const draftCount = searchedRequests.filter((request) => request.status === 'BROUILLON').length
   const approvedCount = searchedRequests.filter((request) => request.status === 'APPROUVE').length
   const rejectedCount = searchedRequests.filter((request) => request.status === 'REJETE').length
+  const handleDownloadDocument = (request: Request) => {
+    window.open(requestService.getGeneratedDocumentDownloadUrl(request.id), '_blank', 'noopener,noreferrer')
+  }
 
   return (
     <div className="space-y-6">
@@ -207,7 +210,12 @@ export default function MyRequestsPage() {
           ) : filteredRequests.length > 0 ? (
             <div className="grid gap-4">
               {filteredRequests.map((request) => (
-                <RequestCard key={request.id} request={request} onView={(current) => setSelectedRequest(current)} />
+                <RequestCard
+                  key={request.id}
+                  request={request}
+                  onView={(current) => setSelectedRequest(current)}
+                  onDownload={handleDownloadDocument}
+                />
               ))}
             </div>
           ) : (
@@ -223,7 +231,12 @@ export default function MyRequestsPage() {
           <DialogHeader>
             <DialogTitle>Details de la demande</DialogTitle>
           </DialogHeader>
-          {selectedRequest && <RequestDetailsSummary request={selectedRequest} />}
+          {selectedRequest && (
+            <RequestDetailsSummary
+              request={selectedRequest}
+              onDownload={handleDownloadDocument}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

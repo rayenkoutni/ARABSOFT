@@ -1,4 +1,6 @@
 import { ApprovalTimeline } from "@/components/approval-timeline"
+import { Button } from "@/components/ui/button"
+import { getDocumentTypeLabel } from "@/lib/document-type"
 import {
   formatDateOnly,
   formatLeaveBalance,
@@ -8,12 +10,14 @@ import {
 } from "@/lib/leave-request"
 import { parseRequestContent } from "@/lib/request-content"
 import { Request } from "@/lib/types"
+import { Download } from "lucide-react"
 
 interface RequestDetailsSummaryProps {
   request: Request
   showBalanceImpact?: boolean
   showRequester?: boolean
   showHistory?: boolean
+  onDownload?: (request: Request) => void
 }
 
 export function RequestDetailsSummary({
@@ -21,6 +25,7 @@ export function RequestDetailsSummary({
   showBalanceImpact = false,
   showRequester = false,
   showHistory = true,
+  onDownload,
 }: RequestDetailsSummaryProps) {
   const { title, description } = parseRequestContent(request)
   const leaveImpact = getLeaveImpactSummary({
@@ -29,6 +34,7 @@ export function RequestDetailsSummary({
     leaveBalance: request.employee?.leaveBalance,
   })
   const isLeaveRequest = isLeaveRequestType(request.type)
+  const documentTypeLabel = request.type === "DOCUMENT" ? getDocumentTypeLabel(request.documentType) : null
 
   return (
     <div className="space-y-4">
@@ -41,6 +47,13 @@ export function RequestDetailsSummary({
         <p className="text-sm font-medium text-muted-foreground">Description</p>
         <p className="text-sm">{description || "Aucune description"}</p>
       </div>
+
+      {documentTypeLabel && (
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">Type de document</p>
+          <p className="text-sm">{documentTypeLabel}</p>
+        </div>
+      )}
 
       {isLeaveRequest && (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -94,6 +107,20 @@ export function RequestDetailsSummary({
         <p className="text-sm font-medium text-muted-foreground">Statut</p>
         <p className="text-sm">{request.status}</p>
       </div>
+
+      {request.generatedDocument && onDownload && (
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            onClick={() => onDownload(request)}
+          >
+            <Download className="h-4 w-4" />
+            Telecharger le document
+          </Button>
+        </div>
+      )}
 
       {showHistory && (
         <div>

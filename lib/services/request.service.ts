@@ -1,4 +1,4 @@
-import { Request, RequestHistoryEntry, UserRole } from '../types';
+import { Request, RequestDocumentType, RequestHistoryEntry, RequestType, UserRole } from '../types';
 import { REQUEST_STATUS, APPROVAL_TYPE } from '../constants';
 
 /**
@@ -26,12 +26,13 @@ export interface WorkflowPendingStep {
 export type WorkflowStep = WorkflowActionStep | WorkflowPendingStep;
 
 export interface RequestCreatePayload {
-  type: string;
+  type: RequestType;
   title: string;
   description: string;
   isDraft?: boolean;
   startDate?: string;
   endDate?: string;
+  documentType?: RequestDocumentType | null;
 }
 
 class RequestService {
@@ -63,6 +64,13 @@ class RequestService {
   }
 
   /**
+   * Get the protected download URL for a generated request document
+   */
+  getGeneratedDocumentDownloadUrl(id: string): string {
+    return `/api/requests/${id}/document`;
+  }
+
+  /**
    * Create new request
    */
   async createRequest(payload: RequestCreatePayload) {
@@ -75,6 +83,7 @@ class RequestService {
         isDraft: payload.isDraft ?? false,
         startDate: payload.startDate || null,
         endDate: payload.endDate || null,
+        documentType: payload.documentType ?? null,
       })
     });
     if (!res.ok) {

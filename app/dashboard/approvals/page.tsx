@@ -20,6 +20,7 @@ import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/lib'
+import { getDocumentTypeLabel } from '@/lib/document-type'
 import { parseRequestContent } from '@/lib/request-content'
 import { matchesRequestDateRange } from '@/lib/request-date-filter'
 import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
@@ -141,6 +142,15 @@ function ApprovalsContent() {
   }
 
   const selectedRequestInfo = selectedRequest ? parseRequestContent(selectedRequest) : null
+  const selectedDocumentTypeLabel = selectedRequest?.type === 'DOCUMENT'
+    ? getDocumentTypeLabel(selectedRequest.documentType)
+    : null
+  const approveActionLabel = selectedRequest?.type === 'DOCUMENT' && selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
+    ? 'Approuver et generer le document'
+    : 'Approuver'
+  const confirmApproveActionLabel = selectedRequest?.type === 'DOCUMENT' && selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
+    ? 'Approuver et generer le document'
+    : "Confirmer l'approbation"
   const pendingRequests = requests.filter((request) => request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH')
   const normalizedSearchTerm = normalizeSearchText(searchTerm)
   const searchedRequests = pendingRequests.filter((request) => {
@@ -327,7 +337,9 @@ function ApprovalsContent() {
                 {selectedRequestInfo && `Titre : ${selectedRequestInfo.title}`}
               </DialogTitle>
               <DialogDescription className="min-w-0 max-w-full wrap-anywhere [word-break:break-word]">
-                Examinez le flux d&apos;approbation et fournissez votre avis
+                {selectedDocumentTypeLabel
+                  ? `Examinez le flux d'approbation. Type de document : ${selectedDocumentTypeLabel}`
+                  : "Examinez le flux d'approbation et fournissez votre avis"}
               </DialogDescription>
             </DialogHeader>
 
@@ -389,7 +401,7 @@ function ApprovalsContent() {
                       </Button>
                       <Button onClick={() => setActionType('approve')} className="gap-2">
                         <CheckCircle2 className="h-4 w-4" />
-                        Approuver
+                        {approveActionLabel}
                       </Button>
                     </>
                   ) : (
@@ -409,7 +421,7 @@ function ApprovalsContent() {
                         disabled={isSubmitting || (actionType === 'reject' && !approvalComment.trim())}
                         variant={actionType === 'reject' ? 'destructive' : 'default'}
                       >
-                        {isSubmitting ? 'Traitement...' : actionType === 'approve' ? "Confirmer l'approbation" : 'Confirmer le rejet'}
+                        {isSubmitting ? 'Traitement...' : actionType === 'approve' ? confirmApproveActionLabel : 'Confirmer le rejet'}
                       </Button>
                     </>
                   )}

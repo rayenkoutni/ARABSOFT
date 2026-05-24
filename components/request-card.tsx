@@ -5,13 +5,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { RequestWorkflowTrail } from '@/components/request-workflow-trail'
 import { useAuth } from '@/lib'
-import { canUserExamineRequest } from '@/lib/request-actions'
+import { canUserDownloadGeneratedDocument, canUserExamineRequest } from '@/lib/request-actions'
 import { formatRequestDateTime } from '@/lib/request-date'
+import { getDocumentTypeLabel } from '@/lib/document-type'
 import { Request, RequestStatus } from '@/lib/types'
 import { parseRequestContent } from '@/lib/request-content'
 import { buildRequestWorkflowSteps } from '@/lib/request-workflow'
 import { formatDateOnly, getLeaveDurationLabel, getLeaveImpactSummary, isLeaveRequestType } from '@/lib/leave-request'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Download } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 function formatSlaStatus(request: Request): string | null {
@@ -29,6 +30,7 @@ interface RequestCardProps {
   onView?: (request: Request) => void
   showApprovalAction?: boolean
   onExamine?: (request: Request) => void
+  onDownload?: (request: Request) => void
 }
 
 const statusConfig: Record<RequestStatus, { label: string; style: React.CSSProperties }> = {
@@ -42,11 +44,11 @@ const statusConfig: Record<RequestStatus, { label: string; style: React.CSSPrope
 const typeLabels: Record<string, string> = {
   CONGE: 'Congé',
   AUTORISATION: 'Autorisation',
-  DOCUMENT: 'Document',
+  DOCUMENT: 'Document RH',
   PRET: 'Prêt',
 }
 
-export function RequestCard({ request, onView, showApprovalAction, onExamine }: RequestCardProps) {
+export function RequestCard({ request, onView, showApprovalAction, onExamine, onDownload }: RequestCardProps) {
   const { user } = useAuth()
   const router = useRouter()
   const status = statusConfig[request.status] || statusConfig.BROUILLON
@@ -55,11 +57,13 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine }: 
   const canExamine = canUserExamineRequest(request, user?.role)
   const slaStatus = formatSlaStatus(request)
   const isLeaveRequest = isLeaveRequestType(request.type)
+  const documentTypeLabel = request.type === 'DOCUMENT' ? getDocumentTypeLabel(request.documentType) : null
   const leaveImpact = getLeaveImpactSummary({
     startDate: request.startDate,
     endDate: request.endDate,
     leaveBalance: request.employee?.leaveBalance,
   })
+  const canDownloadDocument = canUserDownloadGeneratedDocument(request, user)
 
   const isDraft = request.status === 'BROUILLON'
 
@@ -92,6 +96,11 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine }: 
               <span>Duree : {getLeaveDurationLabel(leaveImpact.requestedDays)}</span>
             </div>
           )}
+          {documentTypeLabel && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Type de document : {documentTypeLabel}
+            </p>
+          )}
           {request.employee && (
             <p className="text-xs text-muted-foreground mt-1">par {request.employee.name}</p>
           )}
@@ -116,16 +125,34 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine }: 
             {formatRequestDateTime(request.createdAt)}
           </span>
         </div>
-        {onView && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onView(request)}
-            className="ml-auto"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {onDownload && canDownloadDocument && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2"
+              onClick={(event) => {
+                event.stopPropagation()
+                onDownload(request)
+              }}
+            >
+              <Download className="h-4 w-4" />
+              Telecharger le document
+            </Button>
+          )}
+          {onView && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation()
+                onView(request)
+              }}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Examiner button — navigates to My Approvals with modal pre-open */}

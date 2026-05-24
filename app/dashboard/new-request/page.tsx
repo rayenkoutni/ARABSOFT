@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { documentTypeOptions } from '@/lib/document-type'
 import { useAuth } from '@/lib'
 import {
   formatLeaveBalance,
@@ -27,8 +28,8 @@ import {
   toDateOnlyValue,
 } from '@/lib/leave-request'
 import { parseRequestContent } from '@/lib/request-content'
-import { requestService } from '@/lib/services/request.service'
-import { Request } from '@/lib/types'
+import { RequestCreatePayload, requestService } from '@/lib/services/request.service'
+import { Request, RequestDocumentType, RequestType } from '@/lib/types'
 
 interface EmployeeProfileSummary {
   leaveBalance?: number
@@ -46,6 +47,7 @@ export default function NewRequestPage() {
     description: '',
     startDate: '',
     endDate: '',
+    documentType: '',
   })
   const [leaveBalance, setLeaveBalance] = useState(0)
   const [existingRequests, setExistingRequests] = useState<Request[]>([])
@@ -93,6 +95,7 @@ export default function NewRequestPage() {
             description,
             startDate: toDateOnlyValue(draftRequest.startDate),
             endDate: toDateOnlyValue(draftRequest.endDate),
+            documentType: draftRequest.documentType ?? '',
           })
         }
       } catch (err) {
@@ -122,6 +125,7 @@ export default function NewRequestPage() {
   }, [user])
 
   const isLeaveRequest = isLeaveRequestType(formData.type)
+  const isDocumentRequest = formData.type === 'DOCUMENT'
   const leaveImpact = useMemo(
     () =>
       getLeaveImpactSummary({
@@ -186,6 +190,14 @@ export default function NewRequestPage() {
       type: value,
       startDate: value === 'CONGE' ? current.startDate : '',
       endDate: value === 'CONGE' ? current.endDate : '',
+      documentType: value === 'DOCUMENT' ? current.documentType : '',
+    }))
+  }
+
+  const handleDocumentTypeChange = (value: string) => {
+    setFormData((current) => ({
+      ...current,
+      documentType: value,
     }))
   }
 
@@ -198,6 +210,11 @@ export default function NewRequestPage() {
       return
     }
 
+    if (isDocumentRequest && !formData.documentType) {
+      setError('Le type de document est obligatoire')
+      return
+    }
+
     if (leaveValidationMessage || overlapValidationMessage) {
       setError(leaveValidationMessage || overlapValidationMessage)
       return
@@ -206,13 +223,14 @@ export default function NewRequestPage() {
     try {
       setIsSubmitting(true)
 
-      const payload = {
-        type: formData.type,
+      const payload: RequestCreatePayload = {
+        type: formData.type as RequestType,
         title: formData.title,
         description: formData.description,
         isDraft: asDraft,
         startDate: isLeaveRequest ? formData.startDate : '',
         endDate: isLeaveRequest ? formData.endDate : '',
+        documentType: isDocumentRequest ? formData.documentType as RequestDocumentType : null,
       }
 
       if (draftId) {
@@ -225,6 +243,7 @@ export default function NewRequestPage() {
             isDraft: payload.isDraft,
             startDate: payload.startDate || null,
             endDate: payload.endDate || null,
+            documentType: payload.documentType ?? null,
           }),
         })
 
@@ -284,6 +303,24 @@ export default function NewRequestPage() {
                 </SelectContent>
               </Select>
             </FieldGroup>
+
+            {isDocumentRequest && (
+              <FieldGroup>
+                <FieldLabel htmlFor="documentType">Type de document</FieldLabel>
+                <Select value={formData.documentType} onValueChange={handleDocumentTypeChange}>
+                  <SelectTrigger id="documentType">
+                    <SelectValue placeholder="Selectionner le type de document" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {documentTypeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FieldGroup>
+            )}
 
             <FieldGroup>
               <FieldLabel htmlFor="title">Titre</FieldLabel>

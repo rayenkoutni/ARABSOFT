@@ -16,6 +16,15 @@ const requestInclude = {
       hireDate: true,
     },
   },
+  generatedDocument: {
+    select: {
+      id: true,
+      fileName: true,
+      documentType: true,
+      reference: true,
+      generatedAt: true,
+    },
+  },
   history: {
     orderBy: { createdAt: "asc" as const },
   },
@@ -177,6 +186,7 @@ export async function POST(req: Request) {
       comment: body.comment,
       startDate,
       endDate,
+      documentType: body.type === "DOCUMENT" ? body.documentType : null,
       slaDeadline,
       history: {
         create: {
@@ -222,6 +232,7 @@ export async function POST(req: Request) {
       status: request.status,
       startDate: request.startDate?.toISOString() ?? null,
       endDate: request.endDate?.toISOString() ?? null,
+      documentType: request.documentType ?? null,
     },
   })
 

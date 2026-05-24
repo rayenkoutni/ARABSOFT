@@ -11,3 +11,30 @@ export function canUserExamineRequest(request: Request, role?: UserRole) {
 
   return false
 }
+
+export function canUserDownloadGeneratedDocument(
+  request: Request,
+  user?: { id: string; role: UserRole } | null,
+) {
+  if (!user) {
+    return false
+  }
+
+  if (
+    request.type !== 'DOCUMENT' ||
+    request.status !== 'APPROUVE' ||
+    !request.generatedDocument
+  ) {
+    return false
+  }
+
+  if (user.role === 'RH') {
+    return true
+  }
+
+  if (user.role === 'COLLABORATEUR') {
+    return request.employeeId === user.id
+  }
+
+  return false
+}
