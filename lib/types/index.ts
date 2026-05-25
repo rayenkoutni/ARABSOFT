@@ -50,6 +50,10 @@ export interface Request {
   documentType?: RequestDocumentType | null
   slaDeadline?: string | null
   slaBreached: boolean
+  slaNearingNotified: boolean
+  slaStatus: 'MET' | 'WARNING' | 'BREACHED'
+  currentOwner?: string | null
+  slaLastNotifiedAt?: string | null
   createdAt: string
   updatedAt: string
   employee?: {

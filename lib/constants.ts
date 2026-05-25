@@ -97,13 +97,7 @@ export const PAGINATION = {
   MAX_LIMIT: 100,
 } as const;
 
-// SLA Days for different request types
-export const SLA_DAYS: Record<string, number> = {
-  [REQUEST_TYPE.LEAVE]: 3,
-  [REQUEST_TYPE.AUTHORIZATION]: 1,
-  [REQUEST_TYPE.DOCUMENT]: 2,
-  [REQUEST_TYPE.LOAN]: 5,
-} as const;
+
 
 // Kafka Configuration
 export const KAFKA = {

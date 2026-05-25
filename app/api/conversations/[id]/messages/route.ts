@@ -33,7 +33,7 @@ export async function GET(
     }
 
     const isParticipant = conversation.participants.some(
-      (p) => p.id === user.id
+      (p: { id: string }) => p.id === user.id
     )
 
     if (!isParticipant) {
@@ -90,7 +90,7 @@ export async function GET(
     // Create MessageRead records for all unread messages
     if (unreadMessages.length > 0) {
       await prisma.messageRead.createMany({
-        data: unreadMessages.map(msg => ({
+        data: unreadMessages.map((msg: { id: string }) => ({
           messageId: msg.id,
           employeeId: user.id
         }))

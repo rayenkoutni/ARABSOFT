@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/services/prisma.service';
-import { REQUEST_STATUS, APPROVAL_TYPE, SLA_DAYS, REQUEST_TYPE } from '@/lib';
+import { REQUEST_STATUS, APPROVAL_TYPE, REQUEST_TYPE } from '@/lib/constants';
 import { notificationServerService } from '@/lib/services/server/notification.service';
+import { slaService } from '@/lib/services/server/sla.service';
 import { RequestStatus, RequestType, ApprovalType } from '@prisma/client';
 
 class RequestServerService {
@@ -25,13 +26,16 @@ class RequestServerService {
   }
 
   /**
-   * Calculate SLA deadline
+   * Calculate SLA deadline in business hours
    */
-  calculateSlaDeadline(type: string): Date {
-    const deadline = new Date();
-    const days = SLA_DAYS[type] ?? 3;
-    deadline.setDate(deadline.getDate() + days);
-    return deadline;
+  async calculateSlaDeadline(type: string): Promise<Date> {
+    const config = await prisma.slaConfig.findUnique({
+      where: { requestType: type as RequestType },
+    });
+    if (!config) {
+      throw new Error(`No SLA config found for request type: ${type}`);
+    }
+    return slaService.addBusinessHours(new Date(), config.maxHours);
   }
 
   /**
@@ -63,7 +67,7 @@ class RequestServerService {
         where: { managerId: user.id },
         select: { id: true },
       });
-      const teamIds = teamMembers.map((e) => e.id);
+      const teamIds = teamMembers.map((e: { id: string }) => e.id);
 
       let whereClause: Record<string, any> = { employeeId: { in: teamIds } };
 
@@ -109,7 +113,6 @@ class RequestServerService {
   }) {
     const approvalType = this.getApprovalType(data.type);
     const initialStatus = this.getInitialStatus(approvalType, data.isDraft);
-    const slaDeadline = this.calculateSlaDeadline(data.type);
 
     const request = await prisma.request.create({
       data: {
@@ -118,7 +121,6 @@ class RequestServerService {
         status: initialStatus as RequestStatus,
         employeeId: data.employeeId,
         managerId: data.managerId,
-        slaDeadline,
         history: {
           create: {
             actorId: data.employeeId,
@@ -130,6 +132,9 @@ class RequestServerService {
       },
       include: { history: true },
     });
+
+    // Initialize SLA for the new request
+    await slaService.initializeSla(request.id, data.type);
 
     // Notify appropriate parties if not a draft
     if (!data.isDraft) {
@@ -164,12 +169,12 @@ class RequestServerService {
     let nextStatus = request.status;
 
     if (action === 'REJECT') {
-      nextStatus = REQUEST_STATUS.REJECTED as any;
+      nextStatus = REQUEST_STATUS.REJECTED as RequestStatus;
     } else if (action === 'APPROVE') {
       if (request.status === REQUEST_STATUS.PENDING_MANAGER) {
-        nextStatus = REQUEST_STATUS.PENDING_HR as any;
+        nextStatus = REQUEST_STATUS.PENDING_HR as RequestStatus;
       } else if (request.status === REQUEST_STATUS.PENDING_HR) {
-        nextStatus = REQUEST_STATUS.APPROVED as any;
+        nextStatus = REQUEST_STATUS.APPROVED as RequestStatus;
       }
     }
 
@@ -221,9 +226,11 @@ class RequestServerService {
       );
     }
 
+    // Handle SLA transition for status changes
+    await slaService.transitionSla(id, nextStatus);
+
     return updatedRequest;
   }
 }
 
 export const requestServerService = new RequestServerService();
-

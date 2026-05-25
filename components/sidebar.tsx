@@ -16,6 +16,7 @@ import {
   MessageSquare,
   ClipboardList,
   Sparkles,
+  AlertCircle,
 } from 'lucide-react'
 
 interface NavItem {
@@ -112,10 +113,15 @@ export function Sidebar() {
         label: 'Journal d\'audit',
         href: '/dashboard/audit',
         icon: <ClipboardList className="h-4 w-4" />,
-      }
+      },
     )
   } else if (user.role === 'CHEF') {
     navItems.push(
+      {
+        label: 'Mon Équipe',
+        href: '/dashboard/equipe',
+        icon: <Users className="h-4 w-4" />,
+      },
       {
         label: 'Demandes de l\'equipe',
         href: '/dashboard/team-requests',
@@ -163,20 +169,21 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="hidden md:flex flex-col w-64 border-r bg-sidebar">
-      <div className="px-6 py-6 border-b">
+    <aside className="hidden md:flex flex-col md:w-20 lg:w-64 border-r bg-sidebar transition-all duration-200">
+      <div className="flex px-6 py-6 md:px-2 md:py-4 border-b md:justify-center lg:justify-start">
         <Link href="/dashboard">
           <img src="/logo.png" alt="ARABSOFT Logo" className="h-8 w-auto" />
         </Link>
       </div>
 
-      <div className="flex-1 space-y-0.5 px-3 py-4">
+      <div className="flex-1 space-y-0.5 px-2 md:px-3 py-4">
         {navItems.map((item) => (
           <Link
             key={item.href}
             href={item.href}
             className={cn(
               'flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all relative',
+              'md:justify-center lg:justify-start md:px-2 lg:px-4',
               pathname === item.href
                 ? 'bg-blue-50 dark:bg-slate-700 text-sidebar-primary'
                 : 'text-sidebar-foreground hover:bg-gray-50 dark:hover:bg-slate-700'
@@ -190,7 +197,7 @@ export function Sidebar() {
             <span style={{ color: pathname === item.href ? '#2563B0' : '#6B7280' }}>
               {item.icon}
             </span>
-            <span style={{ fontWeight: pathname === item.href ? 600 : 500 }}>
+            <span className="hidden lg:inline" style={{ fontWeight: pathname === item.href ? 600 : 500 }}>
               {item.label}
             </span>
             {item.badge && item.badge > 0 && (
@@ -205,11 +212,12 @@ export function Sidebar() {
         ))}
       </div>
 
-      <div className="border-t px-3 py-4">
+      <div className="border-t px-2 md:px-3 py-4">
         <Link
           href="/dashboard/settings"
           className={cn(
             'flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all relative',
+            'md:justify-center lg:justify-start md:px-2 lg:px-4',
             pathname === '/dashboard/settings'
               ? 'bg-blue-50 dark:bg-slate-700 text-sidebar-primary'
               : 'text-sidebar-foreground hover:bg-gray-50 dark:hover:bg-slate-700'
@@ -223,7 +231,7 @@ export function Sidebar() {
           <span style={{ color: pathname === '/dashboard/settings' ? '#2563B0' : '#6B7280' }}>
             <Settings className="h-4 w-4" />
           </span>
-          <span style={{ fontWeight: pathname === '/dashboard/settings' ? 600 : 500 }}>
+          <span className="hidden lg:inline" style={{ fontWeight: pathname === '/dashboard/settings' ? 600 : 500 }}>
             Parametres
           </span>
         </Link>

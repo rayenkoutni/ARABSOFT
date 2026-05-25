@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { useAuth } from '@/lib'
-import { useNotificationRefresh } from '@/lib/notification-context'
+import { useNotificationRefresh } from '@/lib'
 import { usePathname, useRouter } from 'next/navigation'
 import { MessageNotificationPopup } from '@/components/message-notification-popup'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'

@@ -11,29 +11,36 @@ import { createRequire } from "module"
 import { prisma } from "./lib/prisma"
 import { initCron } from "./lib/cron"
 
+function sanitize(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 const dev = process.env.NODE_ENV !== "production"
 const hostname = "localhost"
 const port = parseInt(process.env.PORT || "3000", 10)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const projectDir = process.cwd()
 const require = createRequire(import.meta.url)
 const kafkaBroker = process.env.KAFKA_BROKER || "localhost:9092"
 const kafkaStartupAttempts = 15
 const kafkaStartupDelayMs = 1000
-
-if (dev) {
-  process.env.IS_WEBPACK_TEST = "1"
-}
 
 const next = require("next") as typeof import("next")["default"]
 
 // Initialize Next.js app
 const app = next({
   dev,
-  dir: __dirname,
+  dir: projectDir,
   hostname,
   port,
-  ...(dev ? { webpack: true } : {}),
+  turbopack: dev, // Enable turbopack natively in dev mode
 })
 const handle = app.getRequestHandler()
 
@@ -150,9 +157,11 @@ async function initConsumer() {
   console.log("Kafka consumer connected and subscribed")
 
   await consumer.run({
-    eachMessage: async ({ message }) => {
+    eachMessage: async ({ message, topic, partition }) => {
+      console.log(`📥 [Kafka Consumer] Received message from topic ${topic} partition ${partition}`)
       try {
         const payload = JSON.parse(message.value?.toString() || "{}")
+        console.log(`📥 [Kafka Payload]:`, payload)
         const { senderId, conversationId, content, recipientId } = payload
 
         // Save message to PostgreSQL via Prisma
@@ -273,133 +282,18 @@ async function startServer() {
   })
 
   global.io = io
+  
+  const { socketService } = await import("./lib/services/server/socket.service")
+  socketService.init(io)
 
-  // Socket.io connection handler
-  io.on("connection", async (socket) => {
-    // Authenticate the socket connection
-    const user = await authenticateSocket(socket.handshake)
-
-    if (!user) {
-      console.log("Unauthenticated socket connection, disconnecting")
-      socket.disconnect()
-      return
-    }
-
-    console.log(`User ${user.id} connected with socket ${socket.id}`)
-
-    // Join user's personal room
-    socket.join(user.id)
-
-    // Track socket ID for this user
-    if (!userSockets.has(user.id)) {
-      userSockets.set(user.id, new Set())
-    }
-    userSockets.get(user.id)!.add(socket.id)
-
-    // Handle send_message event
-    socket.on("send_message", async (data) => {
-      try {
-        const { conversationId, content, recipientId } = data
-
-        if (!conversationId || !content || !recipientId) {
-          socket.emit("error", { message: "Missing required fields" })
-          return
-        }
-
-        // Verify user is a participant in the conversation
-        const conversation = await prisma.conversation.findUnique({
-          where: { id: conversationId },
-          include: { participants: { select: { id: true } } },
-        })
-
-        if (!conversation) {
-          socket.emit("error", { message: "Conversation not found" })
-          return
-        }
-
-        const isParticipant = conversation.participants.some(
-          (p) => p.id === user.id
-        )
-        if (!isParticipant) {
-          socket.emit("error", { message: "Not a participant in this conversation" })
-          return
-        }
-
-        if (!kafkaEnabled || !producer) {
-          socket.emit("error", {
-            message: "Chat service is temporarily unavailable because Kafka is offline.",
-          })
-          return
-        }
-
-        // Publish message to Kafka
-        await producer.send({
-          topic: "chat-messages",
-          messages: [
-            {
-              value: JSON.stringify({
-                senderId: user.id,
-                conversationId,
-                content,
-                recipientId,
-                timestamp: new Date().toISOString(),
-              }),
-            },
-          ],
-        })
-
-        console.log(`Message published to Kafka by user ${user.id}`)
-      } catch (error) {
-        console.error("Error sending message:", error)
-        socket.emit("error", { message: "Failed to send message" })
-      }
-    })
-
-    // Handle typing indicator
-    socket.on("typing", (data) => {
-      const { conversationId, recipientId } = data
-      const recipientSockets = userSockets.get(recipientId)
-      if (recipientSockets) {
-        recipientSockets.forEach((socketId) => {
-          io.to(socketId).emit("user_typing", {
-            userId: user.id,
-            conversationId,
-          })
-        })
-      }
-    })
-
-    // Handle stop typing indicator
-    socket.on("stop_typing", (data) => {
-      const { conversationId, recipientId } = data
-      const recipientSockets = userSockets.get(recipientId)
-      if (recipientSockets) {
-        recipientSockets.forEach((socketId) => {
-          io.to(socketId).emit("user_stop_typing", {
-            userId: user.id,
-            conversationId,
-          })
-        })
-      }
-    })
-
-    // Handle disconnect
-    socket.on("disconnect", () => {
-      console.log(`User ${user.id} disconnected socket ${socket.id}`)
-
-      // Remove socket from user's set
-      const sockets = userSockets.get(user.id)
-      if (sockets) {
-        sockets.delete(socket.id)
-        if (sockets.size === 0) {
-          userSockets.delete(user.id)
-        }
-      }
-    })
-  })
-
-  // Initialize Kafka producer and consumer
-  await initKafkaIfAvailable()
+  const { chatService } = await import("./lib/services/server/chat.service")
+  try {
+    await chatService.init()
+    kafkaEnabled = true
+  } catch (error) {
+    console.warn("Kafka initialization failed. Chat will fall back to direct DB inserts.", error)
+    kafkaEnabled = false
+  }
 
   initCron()
 
@@ -412,6 +306,24 @@ async function startServer() {
         ? "> Kafka producer and consumer initialized"
         : "> Kafka unavailable, continuing without Kafka-backed chat"
     )
+
+    // Warm up critical routes to eliminate cold start compilation delays
+    if (dev) {
+      console.log(`> Warming up critical routes (/ , /login, /dashboard)...`)
+      const warmupRoutes = ['/', '/login', '/dashboard'];
+      
+      const warmup = async () => {
+        for (const route of warmupRoutes) {
+          try {
+            await fetch(`http://${hostname}:${port}${route}`);
+          } catch (e) {}
+        }
+      };
+
+      warmup().then(() => {
+        console.log(`> ✨ Core routes compiled and cached!`);
+      });
+    }
   })
 }
 

@@ -1,0 +1,1 @@
+INSERT INTO "Employee" (id, name, email, password, phone, role, department, position, "hireDate", "leaveBalance", "createdAt", "updatedAt") VALUES (gen_random_uuid(), 'Admin User', 'admin@demo.com', '$2b$10$Ys8Hmu.JDm55WsQoW0gr7.Ya51NcX1OQtcMql3eVZoL2.dHWuRE8i', '+216 00 000 000', 'RH', 'Admin', 'Administrator', now(), 25, now(), now());

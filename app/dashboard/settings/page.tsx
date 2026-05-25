@@ -233,23 +233,31 @@ export default function SettingsPage() {
       return
     }
 
-    // Mock API call
     try {
-      await fetch('/api/auth/password', { method: 'PATCH', body: JSON.stringify(passwords) })
-      // Show success
-      toast({
-        description: (
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
-            <span>Mot de passe modifié avec succès</span>
-          </div>
-        ),
-        className: "bg-[#10B981] text-white border-none",
-        duration: 3000,
+      const res = await fetch('/api/auth/password', { 
+        method: 'PATCH', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(passwords) 
       })
-      setPasswords({ current: '', new: '', confirm: '' })
+      
+      if (res.ok) {
+        toast({
+          description: (
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
+              <span>Mot de passe modifié avec succès</span>
+            </div>
+          ),
+          className: "bg-[#10B981] text-white border-none",
+          duration: 3000,
+        })
+        setPasswords({ current: '', new: '', confirm: '' })
+      } else {
+        const data = await res.json()
+        setPwdErrors([data.error || "Une erreur est survenue."])
+      }
     } catch (err) {
-      // Ignore mock failure
+      setPwdErrors(["Erreur réseau."])
     }
   }
 
@@ -347,7 +355,7 @@ export default function SettingsPage() {
         <div className="flex-1 space-y-6">
           <TabsContent value="profile" className="space-y-6 m-0 opacity-100 animate-in fade-in duration-300">
             {/* Avatar Section */}
-            <Card className="p-6">
+            <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Photo de profil</h2>
               <div className="flex items-center gap-6">
                 <div 
@@ -396,8 +404,8 @@ export default function SettingsPage() {
               </div>
             </Card>
 
-            {/* Personal Info Section */}
-            <Card className="p-6">
+             {/* Personal Info Section */}
+             <Card className="p-3 md:p-4 lg:p-5">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold" style={{ color: 'var(--color-brand-navy)' }}>Informations personnelles</h2>
                 {!isEditingProfile ? (
@@ -494,7 +502,7 @@ export default function SettingsPage() {
           </TabsContent>
 
           <TabsContent value="security" className="m-0 opacity-100 animate-in fade-in duration-300">
-            <Card className="p-6">
+            <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Changer le mot de passe</h2>
               <form onSubmit={handlePasswordSubmit} className="space-y-4 max-w-md">
                 
@@ -559,8 +567,8 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="notifications" className="m-0 opacity-100 animate-in fade-in duration-300">
-            <Card className="p-6">
+           <TabsContent value="notifications" className="m-0 opacity-100 animate-in fade-in duration-300">
+             <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Préférences de notification</h2>
               
               <div className="space-y-6">
@@ -605,8 +613,8 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="appearance" className="m-0 opacity-100 animate-in fade-in duration-300">
-            <Card className="p-6">
+           <TabsContent value="appearance" className="m-0 opacity-100 animate-in fade-in duration-300">
+             <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Apparence</h2>
               
               <div className="grid grid-cols-2 max-w-sm gap-4">
@@ -661,7 +669,7 @@ function SlaSettingsTab() {
   if (loading) return <div className="p-6 text-center">Chargement...</div>
 
   return (
-    <Card className="p-6">
+    <Card className="p-3 md:p-4 lg:p-5">
       <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Configuration SLA</h2>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

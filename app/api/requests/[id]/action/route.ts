@@ -12,6 +12,9 @@ import { getCurrentUser } from "@/lib/getCurrentUser"
 import { calculateLeaveBusinessDays, isLeaveRequestType, toDateOnlyValue } from "@/lib/leave-request"
 import { prisma } from "@/lib/prisma"
 import { notificationServerService } from "@/lib/services/server/notification.service"
+import { payslipService } from "@/lib/services/server/payslip.service"
+import { slaService } from "@/lib/services/server/sla.service"
+import type { RequestStatus } from "@/lib/types"
 
 const requestActionInclude = {
   employee: {
@@ -70,7 +73,7 @@ export async function POST(
       employee: { name: string }
     }
     updated: unknown
-    newStatus: string
+    newStatus: RequestStatus
     deductedDays: number
     generatedDocumentCreated: boolean
     generatedDocumentReference: string | null
@@ -175,6 +178,14 @@ export async function POST(
         throw new Error("ACTION_NOT_ALLOWED")
       }
 
+      const employee = await tx.employee.findUnique({
+        where: { id: request.employeeId },
+      })
+
+      if (!employee) {
+        throw new Error("EMPLOYEE_NOT_FOUND")
+      }
+
       let deductedDays = 0
 
       if (action === "APPROVE" && isLeaveRequestType(request.type)) {
@@ -190,7 +201,7 @@ export async function POST(
           throw new Error("INVALID_LEAVE_RANGE")
         }
 
-        if (request.employee.leaveBalance < deductedDays) {
+        if (employee.leaveBalance < deductedDays) {
           throw new Error("INSUFFICIENT_LEAVE_BALANCE")
         }
       }
@@ -284,7 +295,14 @@ export async function POST(
       }
 
       return {
-        request,
+        request: {
+          id: request.id,
+          status: request.status,
+          type: request.type,
+          documentType: request.documentType,
+          employeeId: request.employeeId,
+          employee: { name: request.employee.name },
+        },
         updated,
         newStatus,
         deductedDays,
@@ -335,48 +353,47 @@ export async function POST(
     })
   }
 
+  await slaService.transitionSla(id, result.newStatus)
+
   const isRejected = result.newStatus === "REJETE"
   const isFullyApproved = result.newStatus === "APPROUVE"
   const isAwaitingHR = result.newStatus === "EN_ATTENTE_RH"
 
-  try {
-    let employeeMsg = ""
-    if (isRejected) employeeMsg = `Votre demande (${result.request.type}) a ete rejetee par ${user.name}.`
-    else if (isFullyApproved) employeeMsg = `Votre demande (${result.request.type}) a ete approuvee.`
-    else if (isAwaitingHR) employeeMsg = `Votre demande (${result.request.type}) a ete validee par votre chef et est en attente RH.`
-
-    if (employeeMsg) {
-      await prisma.notification.create({
-        data: {
-          employeeId: result.request.employeeId,
-          title: "Mise a jour de votre demande",
-          message: employeeMsg,
-        },
-      })
+  if (
+    isFullyApproved &&
+    result.request.type === "DOCUMENT" &&
+    result.request.documentType !== "ATTESTATION_TRAVAIL"
+  ) {
+    try {
+      await payslipService.generatePayslip(result.request.id)
+    } catch (err) {
+      console.error("Payslip auto-generation failed (approval still succeeded):", err)
     }
+  }
 
-    if (result.generatedDocumentCreated) {
-      await notificationServerService.createNotification(
-        result.request.employeeId,
-        "Document disponible",
-        "Votre attestation de travail est disponible.",
+  let employeeMsg = ""
+  if (isRejected) employeeMsg = `Votre demande (${result.request.type}) a ete rejetee par ${user.name}.`
+  else if (isFullyApproved) employeeMsg = `Votre demande (${result.request.type}) a ete approuvee.`
+  else if (isAwaitingHR) employeeMsg = `Votre demande (${result.request.type}) a ete validee par votre chef et est en attente RH.`
+
+  if (employeeMsg) {
+    await notificationServerService.createNotification(
+      result.request.employeeId,
+      result.generatedDocumentCreated ? "Document disponible" : "Mise a jour de votre demande",
+      result.generatedDocumentCreated
+        ? "Votre attestation de travail est disponible."
+        : employeeMsg,
+    )
+  }
+
+  if (isAwaitingHR) {
+    const rhUsers = await prisma.employee.findMany({ where: { role: "RH" } })
+    if (rhUsers.length > 0) {
+      await notificationServerService.notifyHR(
+        "Nouvelle validation requise",
+        `La demande de ${result.request.employee.name} a ete validee par son manager et necessite votre validation finale.`,
       )
     }
-
-    if (isAwaitingHR) {
-      const rhUsers = await prisma.employee.findMany({ where: { role: "RH" } })
-      if (rhUsers.length > 0) {
-        await prisma.notification.createMany({
-          data: rhUsers.map((rh: { id: string }) => ({
-            employeeId: rh.id,
-            title: "Nouvelle validation requise",
-            message: `La demande de ${result.request.employee.name} a ete validee par son manager et necessite votre validation finale.`,
-          })),
-        })
-      }
-    }
-  } catch (notificationError) {
-    console.error("Error sending request notifications:", notificationError)
   }
 
   const auditAction =

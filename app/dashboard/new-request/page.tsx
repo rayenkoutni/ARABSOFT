@@ -16,8 +16,8 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { documentTypeOptions } from '@/lib/document-type'
 import { useAuth } from '@/lib'
+import { documentTypeOptions } from '@/lib/document-type'
 import {
   formatLeaveBalance,
   getLeaveDurationLabel,
@@ -28,8 +28,9 @@ import {
   toDateOnlyValue,
 } from '@/lib/leave-request'
 import { parseRequestContent } from '@/lib/request-content'
-import { RequestCreatePayload, requestService } from '@/lib/services/request.service'
 import { Request, RequestDocumentType, RequestType } from '@/lib/types'
+import { requestService } from '@/lib/services/request.service'
+import type { RequestCreatePayload } from '@/lib/services/request.service'
 
 interface EmployeeProfileSummary {
   leaveBalance?: number
@@ -43,11 +44,11 @@ export default function NewRequestPage() {
 
   const [formData, setFormData] = useState({
     type: '',
+    documentType: '',
     title: '',
     description: '',
     startDate: '',
     endDate: '',
-    documentType: '',
   })
   const [leaveBalance, setLeaveBalance] = useState(0)
   const [existingRequests, setExistingRequests] = useState<Request[]>([])
@@ -91,11 +92,11 @@ export default function NewRequestPage() {
           const { title, description } = parseRequestContent(draftRequest)
           setFormData({
             type: draftRequest.type,
+            documentType: draftRequest.documentType ?? '',
             title,
             description,
             startDate: toDateOnlyValue(draftRequest.startDate),
             endDate: toDateOnlyValue(draftRequest.endDate),
-            documentType: draftRequest.documentType ?? '',
           })
         }
       } catch (err) {
@@ -281,7 +282,7 @@ export default function NewRequestPage() {
           <Spinner className="h-8 w-8" />
         </div>
       ) : (
-        <Card className="max-w-2xl p-6">
+        <Card className="max-w-2xl p-3 md:p-4 lg:p-5">
           <form onSubmit={(e) => handleSubmit(e, false)} className="space-y-6">
             {error && (
               <div className="rounded-lg p-4 text-sm" style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}>

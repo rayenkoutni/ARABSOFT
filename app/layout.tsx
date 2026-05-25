@@ -1,12 +1,12 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono, Plus_Jakarta_Sans } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
-import { AuthProvider } from '@/lib'
-import { NotificationProvider } from '@/lib/notification-context'
+import { AuthProvider, NotificationProvider } from '@/lib'
 import { Toaster } from '@/components/ui/sonner'
+import '@/lib/cron/monthly-evaluation' // registers the monthly evaluation cron job
 import './globals.css'
 
-export const runtime = "nodejs"
+// export const runtime = "nodejs"
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });

@@ -18,8 +18,7 @@ export interface GenerateWorkCertificatePdfInput {
   validatedByRole?: string | null
 }
 
-const LOGO_LEFT_PATH = path.join(process.cwd(), 'public', 'logo.png')
-const LOGO_CENTER_PATH = path.join(process.cwd(), 'public', 'arabsoft.png')
+const LOGO_PATH = path.join(process.cwd(), 'public', 'logo.png')
 const DEFAULT_CITY = 'Tunis'
 
 function escapeHtml(value: string) {
@@ -51,18 +50,18 @@ function toEmploymentText(input: GenerateWorkCertificatePdfInput) {
   const hireDate = formatFrenchDate(input.hireDate)
 
   if (employeePosition && employeeDepartment) {
-    return `occupe le poste de <strong>${escapeHtml(employeePosition)}</strong> au sein du département <strong>${escapeHtml(employeeDepartment)}</strong> depuis le <strong>${escapeHtml(hireDate)}</strong>.`
+    return `occupe le poste de <strong>${escapeHtml(employeePosition)}</strong> au sein du departement <strong>${escapeHtml(employeeDepartment)}</strong> depuis le <strong>${escapeHtml(hireDate)}</strong>.`
   }
 
   if (employeePosition) {
-    return `occupe le poste de <strong>${escapeHtml(employeePosition)}</strong> au sein de notre société depuis le <strong>${escapeHtml(hireDate)}</strong>.`
+    return `occupe le poste de <strong>${escapeHtml(employeePosition)}</strong> au sein de notre societe depuis le <strong>${escapeHtml(hireDate)}</strong>.`
   }
 
   if (employeeDepartment) {
-    return `travaille au sein du département <strong>${escapeHtml(employeeDepartment)}</strong> depuis le <strong>${escapeHtml(hireDate)}</strong>.`
+    return `travaille au sein du departement <strong>${escapeHtml(employeeDepartment)}</strong> depuis le <strong>${escapeHtml(hireDate)}</strong>.`
   }
 
-  return `travaille au sein de notre société depuis le <strong>${escapeHtml(hireDate)}</strong>.`
+  return `travaille au sein de notre societe depuis le <strong>${escapeHtml(hireDate)}</strong>.`
 }
 
 async function fileToDataUrl(filePath: string, mimeType: string) {
@@ -70,17 +69,8 @@ async function fileToDataUrl(filePath: string, mimeType: string) {
   return `data:${mimeType};base64,${buffer.toString('base64')}`
 }
 
-async function loadCompanyAssets() {
-  const [leftLogoDataUrl, centeredLogoDataUrl] = await Promise.all([
-    fileToDataUrl(LOGO_LEFT_PATH, 'image/png'),
-    fileToDataUrl(LOGO_CENTER_PATH, 'image/png'),
-  ])
-
-  return { leftLogoDataUrl, centeredLogoDataUrl }
-}
-
 async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) {
-  const assets = await loadCompanyAssets()
+  const logoDataUrl = await fileToDataUrl(LOGO_PATH, 'image/png')
   const employeeName = normalizeLabel(input.employeeName)
 
   if (!employeeName) {
@@ -123,53 +113,26 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
       }
 
       .page {
-        position: relative;
         width: 210mm;
-        height: 297mm;
+        min-height: 297mm;
         padding: 18mm 22mm 14mm;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-
-      .logo-left {
-        position: absolute;
-        top: 9mm;
-        left: 10mm;
-        width: 16mm;
-        height: auto;
       }
 
       .header {
-        min-height: 22mm;
-        margin-bottom: 14mm;
-        display: flex;
-        justify-content: center;
-      }
-
-      .brand-block {
-        width: fit-content;
-        margin: 0 auto;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0;
-        padding-top: 1.5mm;
         text-align: center;
+        margin-bottom: 14mm;
       }
 
-      .brand-logo {
-        width: 54mm;
+      .header img {
+        width: 58mm;
         height: auto;
         display: block;
-        margin-bottom: -13mm;
-        margin-left: 10mm;
+        margin: 0 auto 4mm;
       }
 
       .brand-address {
-        margin-top: 0;
         font-size: 12pt;
-        line-height: 1.2;
+        line-height: 1.3;
         color: #4b5563;
       }
 
@@ -182,13 +145,6 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
         text-decoration: underline;
         text-underline-offset: 4px;
         letter-spacing: 0.04em;
-        color: #111111;
-      }
-
-      .content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
       }
 
       .content p {
@@ -198,15 +154,8 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
         text-align: justify;
       }
 
-      .content strong {
-        font-weight: 700;
-      }
-
       .footer {
-        margin-top: auto;
-        padding-top: 8mm;
-        page-break-inside: avoid;
-        break-inside: avoid;
+        margin-top: 16mm;
       }
 
       .issue-block {
@@ -224,7 +173,6 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
       .signature-title {
         font-size: 11pt;
         font-weight: 700;
-        letter-spacing: 0.04em;
         text-transform: uppercase;
       }
 
@@ -246,40 +194,34 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
         border-top: 1px solid #e5e7eb;
         font-size: 9pt;
         color: #6b7280;
-        page-break-inside: avoid;
-        break-inside: avoid;
       }
     </style>
   </head>
   <body>
     <div class="page">
-      <img class="logo-left" src="${assets.leftLogoDataUrl}" alt="Logo ArabSoft" />
-
       <header class="header">
-        <div class="brand-block">
-          <img class="brand-logo" src="${assets.centeredLogoDataUrl}" alt="ArabSoft" />
-          ${companyAddress ? `<div class="brand-address">${escapeHtml(companyAddress)}</div>` : ''}
-        </div>
+        <img src="${logoDataUrl}" alt="ArabSoft" />
+        ${companyAddress ? `<div class="brand-address">${escapeHtml(companyAddress)}</div>` : ''}
       </header>
 
       <main class="content">
         <h1 class="title">ATTESTATION DE TRAVAIL</h1>
 
         <p>
-          Je soussigné(e), représentant(e) du service des Ressources Humaines de la société
-          <strong>${escapeHtml(companyName)}</strong>, atteste par la présente que
+          Je soussigne(e), representant(e) du service des Ressources Humaines de la societe
+          <strong>${escapeHtml(companyName)}</strong>, atteste par la presente que
           <strong>${escapeHtml(employeeSalutation)} ${escapeHtml(employeeName)}</strong>
           ${employmentText}
         </p>
 
         <p>
-          Cette attestation est délivrée à l’intéressé(e) pour servir et valoir ce que de droit.
+          Cette attestation est delivree a l'interesse(e) pour servir et valoir ce que de droit.
         </p>
       </main>
 
       <footer class="footer">
         <div class="issue-block">
-          Fait à ${escapeHtml(companyCity)}, le ${escapeHtml(generatedAt)}
+          Fait a ${escapeHtml(companyCity)}, le ${escapeHtml(generatedAt)}
         </div>
 
         <div class="signature-area">
@@ -289,7 +231,7 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
           <p class="signature-role">${escapeHtml(validatedByRole)}</p>
         </div>
 
-        <div class="reference">Référence document : ${escapeHtml(input.documentReference)}</div>
+        <div class="reference">Reference document : ${escapeHtml(input.documentReference)}</div>
       </footer>
     </div>
   </body>

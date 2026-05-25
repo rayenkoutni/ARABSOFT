@@ -127,6 +127,8 @@ export const employeeCreateInputSchema = z.object({
   hireDate: hireDateSchema,
   subordinateIds: z.array(z.string().uuid()).optional(),
   technicalSkills: z.array(employeeTechnicalSkillInputSchema).optional().default([]),
+  salaryGradeId: z.string().uuid().optional().nullable(),
+  salaryOverride: z.number().min(0).optional().nullable(),
 })
 
 export const employeeUpdateInputSchema = z.object({
@@ -139,6 +141,8 @@ export const employeeUpdateInputSchema = z.object({
   managerId: z.string().uuid().optional().nullable(),
   hireDate: hireDateSchema.optional(),
   resetPassword: z.boolean().optional(),
+  salaryGradeId: z.string().uuid().optional().nullable(),
+  salaryOverride: z.number().min(0).optional().nullable(),
 })
 
 export type SkillCatalogInput = z.infer<typeof skillCatalogInputSchema>

@@ -45,7 +45,7 @@ export async function GET() {
 
     // Get unread count for each conversation
     const conversationsWithUnread = await Promise.all(
-      conversations.map(async (conversation) => {
+      conversations.map(async (conversation: any) => {
         // Count messages not read by current user (via MessageRead table)
         const unreadCount = await prisma.message.count({
           where: {

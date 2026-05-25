@@ -2,7 +2,8 @@ import { prisma } from "@/lib/prisma"
 import { getCurrentUser } from "@/lib/getCurrentUser"
 import { NextResponse } from "next/server"
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params;
   const user = await getCurrentUser()
   if (!user || user.role !== "RH") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -16,7 +17,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 
   const config = await prisma.slaConfig.update({
-    where: { id: params.id },
+    where: { id: resolvedParams.id },
     data: { maxHours },
   })
 

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server"
+import { Prisma } from "@prisma/client"
 import { logAudit } from "@/lib/audit"
 import { getCurrentUser } from "@/lib/getCurrentUser"
 import { calculateLeaveBusinessDays, isLeaveRequestType, parseDateOnlyToUtcDate } from "@/lib/leave-request"
 import { prisma } from "@/lib/prisma"
 import { requestInputSchema } from "@/lib/request-validation"
-import { getSlaDeadline } from "@/lib/sla"
+import { notificationServerService } from "@/lib/services/server/notification.service"
+import { slaService } from "@/lib/services/server/sla.service"
 
 const requestInclude = {
   employee: {
@@ -30,70 +32,105 @@ const requestInclude = {
   },
 }
 
+const requestIncludeWithoutGeneratedDocument = {
+  employee: requestInclude.employee,
+  history: requestInclude.history,
+}
+
+async function findRequestsWithFallback(args: {
+  where: Record<string, unknown>
+  orderBy: { createdAt: "desc" }
+}) {
+  try {
+    return await prisma.request.findMany({
+      where: args.where,
+      include: requestInclude,
+      orderBy: args.orderBy,
+    })
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2021" &&
+      String(error.meta?.table).includes("GeneratedDocument")
+    ) {
+      console.warn("GeneratedDocument table is missing; retrying requests query without generatedDocument relation.")
+      return prisma.request.findMany({
+        where: args.where,
+        include: requestIncludeWithoutGeneratedDocument,
+        orderBy: args.orderBy,
+      })
+    }
+
+    throw error
+  }
+}
+
 export async function GET(req: Request) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const url = new URL(req.url)
-  const view = url.searchParams.get("view")
+  try {
+    const url = new URL(req.url)
+    const view = url.searchParams.get("view")
 
-  let requests
+    let requests
 
-  if (user.role === "RH") {
-    let whereClause: Record<string, unknown> = {}
+    if (user.role === "RH") {
+      let whereClause: Record<string, unknown> = {}
 
-    if (view === "rh-pending") {
-      whereClause = {
-        status: { in: ["EN_ATTENTE_CHEF", "EN_ATTENTE_RH"] },
+      if (view === "rh-pending") {
+        whereClause = {
+          status: { in: ["EN_ATTENTE_CHEF", "EN_ATTENTE_RH"] },
+        }
+      } else if (view === "rh-history") {
+        whereClause = {
+          status: { in: ["APPROUVE", "REJETE"] },
+        }
       }
-    } else if (view === "rh-history") {
-      whereClause = {
-        status: { in: ["APPROUVE", "REJETE"] },
+
+      requests = await findRequestsWithFallback({
+        where: whereClause,
+        orderBy: { createdAt: "desc" },
+      })
+    } else if (user.role === "CHEF") {
+      const teamMembers = await prisma.employee.findMany({
+        where: { managerId: user.id },
+        select: { id: true },
+      })
+      const teamIds = teamMembers.map((employee: { id: string }) => employee.id)
+
+      let whereClause: Record<string, unknown> = { employeeId: { in: teamIds } }
+
+      if (view === "pending") {
+        whereClause = {
+          employeeId: { in: teamIds },
+          approvalType: "CHEF_THEN_RH",
+          status: { in: ["EN_ATTENTE_CHEF", "EN_ATTENTE_RH"] },
+        }
+      } else if (view === "history") {
+        whereClause = {
+          employeeId: { in: teamIds },
+          approvalType: "CHEF_THEN_RH",
+          status: { in: ["APPROUVE", "REJETE"] },
+        }
       }
+
+      requests = await findRequestsWithFallback({
+        where: whereClause,
+        orderBy: { createdAt: "desc" },
+      })
+    } else {
+      requests = await findRequestsWithFallback({
+        where: { employeeId: user.id },
+        orderBy: { createdAt: "desc" },
+      })
     }
 
-    requests = await prisma.request.findMany({
-      where: whereClause,
-      include: requestInclude,
-      orderBy: { createdAt: "desc" },
-    })
-  } else if (user.role === "CHEF") {
-    const teamMembers = await prisma.employee.findMany({
-      where: { managerId: user.id },
-      select: { id: true },
-    })
-    const teamIds = teamMembers.map((employee: { id: string }) => employee.id)
-
-    let whereClause: Record<string, unknown> = { employeeId: { in: teamIds } }
-
-    if (view === "pending") {
-      whereClause = {
-        employeeId: { in: teamIds },
-        approvalType: "CHEF_THEN_RH",
-        status: { in: ["EN_ATTENTE_CHEF", "EN_ATTENTE_RH"] },
-      }
-    } else if (view === "history") {
-      whereClause = {
-        employeeId: { in: teamIds },
-        approvalType: "CHEF_THEN_RH",
-        status: { in: ["APPROUVE", "REJETE"] },
-      }
-    }
-
-    requests = await prisma.request.findMany({
-      where: whereClause,
-      include: requestInclude,
-      orderBy: { createdAt: "desc" },
-    })
-  } else {
-    requests = await prisma.request.findMany({
-      where: { employeeId: user.id },
-      include: requestInclude,
-      orderBy: { createdAt: "desc" },
-    })
+    return NextResponse.json(requests)
+  } catch (error) {
+    console.error("Error fetching requests:", error)
+    return NextResponse.json({ error: "Failed to fetch requests" }, { status: 500 })
   }
-
-  return NextResponse.json(requests)
 }
 
 export async function POST(req: Request) {
@@ -174,8 +211,6 @@ export async function POST(req: Request) {
       ? "EN_ATTENTE_RH"
       : "EN_ATTENTE_CHEF"
 
-  const slaDeadline = await getSlaDeadline(body.type)
-
   const request = await prisma.request.create({
     data: {
       type: body.type,
@@ -187,7 +222,6 @@ export async function POST(req: Request) {
       startDate,
       endDate,
       documentType: body.type === "DOCUMENT" ? body.documentType : null,
-      slaDeadline,
       history: {
         create: {
           actorId: user.id,
@@ -200,25 +234,23 @@ export async function POST(req: Request) {
     include: requestInclude,
   })
 
+  // Initialize SLA from database config (business hours, owner, status)
+  await slaService.initializeSla(request.id, body.type)
+
   if (approvalType === "DIRECT_RH") {
     const rhUsers = await prisma.employee.findMany({ where: { role: "RH" } })
     if (rhUsers.length > 0) {
-      await prisma.notification.createMany({
-        data: rhUsers.map((rh: { id: string }) => ({
-          employeeId: rh.id,
-          title: "Nouvelle demande",
-          message: `${employee.name} a soumis une nouvelle demande de type ${body.type}`,
-        })),
-      })
+      await notificationServerService.notifyHR(
+        "Nouvelle demande",
+        `${employee.name} a soumis une nouvelle demande de type ${body.type}`,
+      )
     }
   } else if (employee.managerId) {
-    await prisma.notification.create({
-      data: {
-        employeeId: employee.managerId,
-        title: "Nouvelle demande",
-        message: `${employee.name} de votre equipe a soumis une nouvelle demande de type ${body.type}`,
-      },
-    })
+    await notificationServerService.notifyManager(
+      employee.managerId,
+      "Nouvelle demande",
+      `${employee.name} de votre equipe a soumis une nouvelle demande de type ${body.type}`,
+    )
   }
 
   logAudit({

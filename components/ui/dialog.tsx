@@ -57,14 +57,19 @@ function DialogContent({
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
-      <DialogPrimitive.Content
-        data-slot="dialog-content"
-        className={cn(
-          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 flex w-[calc(100vw-2rem)] min-w-0 max-w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] flex-col gap-4 overflow-hidden rounded-lg border p-6 shadow-lg duration-200 sm:w-full sm:max-w-lg',
-          className,
-        )}
-        {...props}
-      >
+        <DialogPrimitive.Content
+          data-slot="dialog-content"
+          className={cn(
+            'bg-background fixed z-50 flex flex-col gap-4 shadow-lg border p-6 duration-200',
+            // Mobile: full-width bottom sheet
+            'inset-x-0 bottom-0 top-auto max-h-[90vh] w-full rounded-t-lg overflow-y-auto',
+            // Desktop: centered modal
+            'sm:top-1/2 sm:left-1/2 sm:right-auto sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-[calc(100vw-2rem)] sm:min-w-0 sm:max-w-[calc(100vw-2rem)] sm:rounded-lg sm:overflow-hidden',
+            'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+            className,
+          )}
+          {...props}
+        >
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close

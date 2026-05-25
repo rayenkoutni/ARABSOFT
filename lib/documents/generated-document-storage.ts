@@ -1,5 +1,5 @@
-import { mkdir, readFile, rm, writeFile } from 'fs/promises'
-import path from 'path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 
 const GENERATED_DOCUMENTS_ROOT = path.join(process.cwd(), 'storage', 'generated-documents')
 

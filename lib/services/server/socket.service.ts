@@ -1,7 +1,8 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { parse } from 'cookie';
 import jwt from 'jsonwebtoken';
-import { ROLE } from '@/lib';
+import { ROLE } from '@/lib/constants';
+import { prisma } from '@/lib/prisma';
 
 interface AuthenticatedUser {
   id: string;
@@ -79,17 +80,64 @@ class SocketService {
   }
 
   private registerChatHandlers(socket: Socket, user: AuthenticatedUser) {
-    // These will be expanded as needed, or moved to a ChatService
-    socket.on('typing', (data) => {
+    socket.on('send_message', async (data: { conversationId?: string; recipientId?: string; content?: string }) => {
+      try {
+        const { conversationId, recipientId, content } = data;
+        if (!conversationId || !content || !recipientId) {
+          socket.emit('error', { message: 'Missing required fields' });
+          return;
+        }
+
+        // Verify participant
+        const conversation = await prisma.conversation.findUnique({
+          where: { id: conversationId },
+          include: { participants: { select: { id: true } } },
+        });
+
+        if (!conversation || !conversation.participants.some((p: { id: string }) => p.id === user.id)) {
+          socket.emit('error', { message: 'Not a participant in this conversation' });
+          return;
+        }
+
+        const { chatService } = await import('@/lib/services/server/chat.service');
+        try {
+          await chatService.sendMessage(user.id, recipientId, conversationId, content);
+        } catch (error) {
+          console.warn('Kafka send failed, falling back to direct save', error);
+          // Fallback direct save if Kafka is down
+          const savedMessage = await prisma.message.create({
+            data: { content, senderId: user.id, conversationId },
+            include: { sender: { select: { id: true, name: true, email: true, avatar: true } } },
+          });
+
+          this.emitToUser(recipientId, 'new_message', savedMessage);
+          this.emitToUser(user.id, 'message_sent', savedMessage);
+
+          const { notificationServerService } = await import('@/lib/services/server/notification.service');
+          await notificationServerService.createNotification(
+            recipientId,
+            'Nouveau message',
+            `${savedMessage.sender.name}: ${savedMessage.content.substring(0, 100)}`
+          );
+        }
+      } catch (error) {
+        console.error('Error in send_message handler:', error);
+        socket.emit('error', { message: 'Failed to send message' });
+      }
+    });
+
+    socket.on('typing', (data: { conversationId?: string; recipientId?: string }) => {
       const { conversationId, recipientId } = data;
+      if (!recipientId) return;
       this.emitToUser(recipientId, 'user_typing', {
         userId: user.id,
         conversationId,
       });
     });
 
-    socket.on('stop_typing', (data) => {
+    socket.on('stop_typing', (data: { conversationId?: string; recipientId?: string }) => {
       const { conversationId, recipientId } = data;
+      if (!recipientId) return;
       this.emitToUser(recipientId, 'user_stop_typing', {
         userId: user.id,
         conversationId,

@@ -13,7 +13,7 @@ interface StatCardProps {
 
 export function StatCard({ label, value, icon: Icon, trend }: StatCardProps) {
   return (
-    <Card className="flex flex-col gap-3 p-6 border-t-4" style={{ borderTopColor: '#2563B0' }}>
+    <Card className="flex flex-col gap-3 p-3 md:p-4 lg:p-5 border-t-4" style={{ borderTopColor: '#2563B0' }}>
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium" style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>{label}</p>
         <div className="rounded-lg p-2" style={{ backgroundColor: 'rgba(37, 99, 176, 0.1)', color: '#2563B0' }}>

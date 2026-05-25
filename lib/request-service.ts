@@ -75,9 +75,9 @@ export const requestService = {
     
     return {
       totalRequests: requests.length,
-      pendingRequests: requests.filter((r: any) => r.status.startsWith('EN_ATTENTE')).length,
-      approvedRequests: requests.filter((r: any) => r.status === 'APPROUVE').length,
-      rejectedRequests: requests.filter((r: any) => r.status === 'REJETE').length,
+      pendingRequests: requests.filter((r: Request) => r.status.startsWith('EN_ATTENTE')).length,
+      approvedRequests: requests.filter((r: Request) => r.status === 'APPROUVE').length,
+      rejectedRequests: requests.filter((r: Request) => r.status === 'REJETE').length,
     };
   },
 
@@ -90,8 +90,17 @@ export const requestService = {
   },
 
   async submitRequest(id: string, role: string): Promise<Request> {
-     // Our new backend submits the request automatically in POST /api/requests
-     // So this is basically a no-op just to satisfy UI components that expect it.
-     return {} as unknown as Request;
+    const res = await fetch(`/api/requests/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isDraft: false })
+    });
+    
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: "Failed to submit request" }));
+      throw new Error(error.error || "Failed to submit request");
+    }
+    
+    return res.json();
   }
 };

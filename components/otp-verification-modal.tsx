@@ -63,9 +63,13 @@ export function OTPVerificationModal({
   const [countdown, setCountdown] = useState(RESEND_COOLDOWN)
   const [shake, setShake] = useState(false)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+  const hasSentInitial = useRef(false)
 
   useEffect(() => {
-    onSendCode()
+    if (!hasSentInitial.current) {
+      hasSentInitial.current = true
+      onSendCode()
+    }
   }, [])
 
   const isComplete = code.every(d => d !== '')

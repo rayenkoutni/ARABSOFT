@@ -50,30 +50,39 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   if (body.taskId) {
     const { taskId, status } = body
+    const allowedTransitions: Record<"COLLABORATEUR" | "CHEF", Record<string, string[]>> = {
+      COLLABORATEUR: {
+        TODO: ["IN_PROGRESS"],
+        IN_PROGRESS: ["IN_REVIEW"],
+        IN_REVIEW: [],
+        DONE: [],
+      },
+      CHEF: {
+        TODO: ["IN_PROGRESS"],
+        IN_PROGRESS: ["IN_REVIEW"],
+        IN_REVIEW: ["DONE"],
+        DONE: [],
+      },
+    }
 
     const task = await prisma.task.findUnique({ where: { id: taskId } })
     if (!task) {
       return NextResponse.json({ error: "Tache introuvable" }, { status: 404 })
     }
 
+    // Validate allowed transitions based on role
     if (user.role === "COLLABORATEUR") {
       if (task.assigneeId !== user.id) {
         return NextResponse.json({ error: "Vous ne pouvez pas modifier les taches d'autres utilisateurs" }, { status: 403 })
       }
+    }
 
-      const allowedTransitions: Record<string, string[]> = {
-        TODO: ["IN_PROGRESS"],
-        IN_PROGRESS: ["IN_REVIEW"],
-        IN_REVIEW: [],
-        DONE: [],
-      }
-
-      if (!allowedTransitions[task.status]?.includes(status)) {
-        return NextResponse.json(
-          { error: "Vous ne pouvez pas effectuer cette transition de statut" },
-          { status: 403 }
-        )
-      }
+    // Check transition validity for both roles
+    if (!allowedTransitions[user.role as keyof typeof allowedTransitions]?.[task.status]?.includes(status)) {
+      return NextResponse.json(
+        { error: "Transition de statut non autorisée" },
+        { status: 403 }
+      )
     }
 
     if (user.role === "CHEF") {
@@ -261,8 +270,8 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Non autorise" }, { status: 401 })
   }
 
-  if (user.role === "RH") {
-    return NextResponse.json({ error: "Acces refuse: les RH ne peuvent pas supprimer des taches" }, { status: 403 })
+  if (user.role === "RH" || user.role === "COLLABORATEUR") {
+    return NextResponse.json({ error: "Acces refuse: seuls les chefs peuvent supprimer des taches" }, { status: 403 })
   }
 
   const url = new URL(req.url)
@@ -282,20 +291,15 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    if (user.role === "CHEF") {
-      const teamMembers = await prisma.employee.findMany({
-        where: { managerId: user.id },
-        select: { id: true }
-      })
-      const teamIds = teamMembers.map((employee: { id: string }) => employee.id)
+    // Only CHEF can delete tasks, and only tasks from their team
+    const teamMembers = await prisma.employee.findMany({
+      where: { managerId: user.id },
+      select: { id: true }
+    })
+    const teamIds = teamMembers.map((employee: { id: string }) => employee.id)
 
-      if (!teamIds.includes(task.assigneeId)) {
-        return NextResponse.json({ error: "Vous ne pouvez pas supprimer les taches d'autres equipes" }, { status: 403 })
-      }
-    }
-
-    if (user.role === "COLLABORATEUR" && task.assigneeId !== user.id) {
-      return NextResponse.json({ error: "Vous ne pouvez pas supprimer les taches d'autres utilisateurs" }, { status: 403 })
+    if (!teamIds.includes(task.assigneeId)) {
+      return NextResponse.json({ error: "Vous ne pouvez pas supprimer les taches d'autres equipes" }, { status: 403 })
     }
 
     await prisma.task.delete({ where: { id: taskId } })

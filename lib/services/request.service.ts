@@ -36,12 +36,30 @@ export interface RequestCreatePayload {
 }
 
 class RequestService {
+  private async extractErrorMessage(res: Response): Promise<string> {
+    const text = await res.text().catch(() => "")
+    if (!text) {
+      return res.statusText || "Unknown error"
+    }
+
+    try {
+      const parsed = JSON.parse(text) as { error?: string }
+      return parsed.error || text
+    } catch {
+      return text
+    }
+  }
+
   /**
    * Fetch all requests
    */
   async getRequests(): Promise<Request[]> {
     const res = await fetch("/api/requests", { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to fetch requests");
+    if (!res.ok) {
+      if (res.status === 401) return [];
+      const text = await this.extractErrorMessage(res);
+      throw new Error(`Failed to fetch requests (${res.status}): ${text}`);
+    }
     return res.json();
   }
 
@@ -50,7 +68,11 @@ class RequestService {
    */
   async getRequestsWithView(view: string): Promise<Request[]> {
     const res = await fetch(`/api/requests?view=${view}`, { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to fetch requests");
+    if (!res.ok) {
+      if (res.status === 401) return []; // Graceful fallback if not authenticated
+      const text = await this.extractErrorMessage(res);
+      throw new Error(`Failed to fetch requests (${res.status}): ${text}`);
+    }
     return res.json();
   }
 
@@ -61,6 +83,10 @@ class RequestService {
     const res = await fetch(`/api/requests/${id}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch request");
     return res.json();
+  }
+
+  getGeneratedDocumentDownloadUrl(id: string): string {
+    return `/api/requests/${id}/document`;
   }
 
   /**

@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Progress } from '@/components/ui/progress'
@@ -57,6 +57,9 @@ interface Task {
   }
   submittedForReview?: boolean
   reviewComment?: string | null
+  deliverableLink?: string | null
+  deliverableNote?: string | null
+  taskScore?: number | null
   requiredSkills: Array<{
     id: string
     minimumLevel: number
@@ -158,7 +161,21 @@ export default function ProjectDetailPage() {
   const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false)
   const [reviewingTask, setReviewingTask] = useState<Task | null>(null)
   const [reviewComment, setReviewComment] = useState('')
+  const [reviewScore, setReviewScore] = useState('')
   const [isReviewing, setIsReviewing] = useState(false)
+
+  // Submit for review (COLLABORATEUR)
+  const [isSubmitReviewOpen, setIsSubmitReviewOpen] = useState(false)
+  const [submittingTask, setSubmittingTask] = useState<Task | null>(null)
+  const [deliverableLink, setDeliverableLink] = useState('')
+  const [deliverableNote, setDeliverableNote] = useState('')
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false)
+  const [submitReviewError, setSubmitReviewError] = useState('')
+
+  // Move Task Dialog (used for both drag + buttons)
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false)
+  const [taskToMove, setTaskToMove] = useState<Task | null>(null)
+  const [selectedStatus, setSelectedStatus] = useState<string>('')
 
   // Task form state
   const [taskForm, setTaskForm] = useState({
@@ -177,6 +194,7 @@ export default function ProjectDetailPage() {
   // RH is read-only observer
   const canManageTasks = user?.role === 'CHEF' || user?.role === 'COLLABORATEUR'
   const canCreateTasks = user?.role === 'CHEF' || user?.role === 'COLLABORATEUR'
+  const canShowTaskButtons = user?.role === 'CHEF' // Only CHEF can see Create Task and Generate AI buttons
   const canManageProject = user?.role === 'CHEF'
 
   // Add team member state
@@ -239,11 +257,36 @@ export default function ProjectDetailPage() {
     if (user?.role === 'COLLABORATEUR' && task.assigneeId !== user.id) {
       return
     }
+    // Block dragging for COLLABORATEUR when task is in review
+    if (user?.role === 'COLLABORATEUR' && task.status === 'IN_REVIEW' && task.assigneeId === user.id) {
+      return
+    }
     setDraggedTask(task)
   }
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
+  }
+
+  // Reusable function to change task status (used by both drag and buttons)
+  const changeTaskStatus = async (taskId: string, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/tasks`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, status: newStatus })
+      })
+
+      if (res.ok) {
+        await fetchProject()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        alert(data.error || "Impossible de déplacer la tâche")
+      }
+    } catch (err) {
+      console.error('Error changing task status:', err)
+      alert("Erreur lors du changement de statut")
+    }
   }
 
   const handleDrop = async (status: string) => {
@@ -255,30 +298,55 @@ export default function ProjectDetailPage() {
       return
     }
 
-    // Don't allow dropping to same column
     if (draggedTask.status === status) {
       setDraggedTask(null)
       return
     }
 
-    try {
-      const res = await fetch(`/api/projects/${projectId}/tasks`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: draggedTask.id,
-          status
-        })
-      })
-
-      if (res.ok) {
-        await fetchProject()
-      }
-    } catch (err) {
-      console.error('Error updating task status:', err)
-    } finally {
-      setDraggedTask(null)
+    // For drag & drop, keep some restrictions for better UX
+    const allowedTransitions = {
+      COLLABORATEUR: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW' },
+      CHEF: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW', IN_REVIEW: 'DONE' }
     }
+
+    const userRole = user?.role as 'COLLABORATEUR' | 'CHEF'
+    const allowedTarget = allowedTransitions[userRole]?.[draggedTask.status as keyof typeof allowedTransitions[typeof userRole]]
+
+    if (allowedTarget !== status) {
+      setDraggedTask(null)
+      return
+    }
+
+    // Special case for COLLABORATEUR:
+    // Dragging their own IN_PROGRESS task to IN_REVIEW → open the deliverable submission modal
+    if (
+      user?.role === 'COLLABORATEUR' &&
+      draggedTask.status === 'IN_PROGRESS' &&
+      status === 'IN_REVIEW' &&
+      draggedTask.assigneeId === user.id
+    ) {
+      openSubmitReviewModal(draggedTask)
+      setDraggedTask(null)
+      return
+    }
+
+    // Direct move without popup for simple forward transition: TODO → IN_PROGRESS (via drag)
+    if (draggedTask.status === 'TODO' && status === 'IN_PROGRESS') {
+      await changeTaskStatus(draggedTask.id, status)
+      setDraggedTask(null)
+      return
+    }
+
+    // Normal case: open the generic Move dialog
+    openMoveDialog(draggedTask, status)
+    setDraggedTask(null)
+  }
+
+  // Open the unified Move Dialog (used by both drag and buttons)
+  const openMoveDialog = (task: Task, preselectedStatus?: string) => {
+    setTaskToMove(task)
+    setSelectedStatus(preselectedStatus || task.status)
+    setIsMoveDialogOpen(true)
   }
 
   const handleCreateTask = async (e: React.FormEvent) => {
@@ -433,7 +501,78 @@ export default function ProjectDetailPage() {
   const openReviewDialog = (task: Task) => {
     setReviewingTask(task)
     setReviewComment('')
+    setReviewScore('')
     setIsReviewDialogOpen(true)
+  }
+
+  // New: Submit task for review (COLLABORATEUR)
+  const openSubmitReviewModal = (task: Task) => {
+    setSubmittingTask(task)
+    setDeliverableLink('')
+    setDeliverableNote('')
+    setIsSubmitReviewOpen(true)
+  }
+
+  const handleSubmitForReview = async () => {
+    if (!submittingTask) return
+    setSubmitReviewError('')
+
+    if (!deliverableLink && !deliverableNote) {
+      setSubmitReviewError("Veuillez fournir au moins un lien ou une note")
+      return
+    }
+
+    setIsSubmittingReview(true)
+    try {
+      const res = await fetch(`/api/tasks/${submittingTask.id}/submit-review`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deliverableLink: deliverableLink || undefined,
+          deliverableNote: deliverableNote || undefined,
+        }),
+      })
+
+      if (res.ok) {
+        setIsSubmitReviewOpen(false)
+        setSubmittingTask(null)
+        setDeliverableLink('')
+        setDeliverableNote('')
+        setSubmitReviewError('')
+        await fetchProject()
+      } else {
+        const data = await res.json()
+        setSubmitReviewError(data.error || "Erreur lors de la soumission")
+      }
+    } catch (err) {
+      setSubmitReviewError("Erreur de connexion au serveur")
+    } finally {
+      setIsSubmittingReview(false)
+    }
+  }
+
+  // New: Review task (CHEF)
+  const handleReviewDeliverable = async (taskId: string, decision: 'APPROVE' | 'REJECT', comment?: string) => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/review`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, reviewComment: comment, taskScore: decision === 'APPROVE' ? reviewScore : undefined }),
+      })
+
+      if (res.ok) {
+        await fetchProject()
+        setIsReviewDialogOpen(false)
+        setReviewingTask(null)
+        setReviewComment('')
+        setReviewScore('')
+      } else {
+        const data = await res.json()
+        alert(data.error || "Erreur lors de la révision")
+      }
+    } catch (err) {
+      alert("Erreur serveur")
+    }
   }
 
   const handleReviewTask = async (action: 'accept' | 'request_revision') => {
@@ -447,7 +586,8 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({
           taskId: reviewingTask.id,
           action,
-          comment: reviewComment
+          comment: reviewComment,
+          taskScore: action === 'accept' ? reviewScore : undefined,
         })
       })
 
@@ -456,6 +596,7 @@ export default function ProjectDetailPage() {
         setIsReviewDialogOpen(false)
         setReviewingTask(null)
         setReviewComment('')
+        setReviewScore('')
       } else {
         const error = await res.json()
         alert(error.error || 'Erreur lors de la révision')
@@ -644,7 +785,7 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </div>
-        {canCreateTasks && (
+        {canShowTaskButtons && (
           <div className="flex flex-wrap items-center gap-2">
             {canManageProject && (
               <>
@@ -1039,7 +1180,7 @@ export default function ProjectDetailPage() {
       </Dialog>
 
       {/* Project Info Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="p-4">
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Progression</p>
@@ -1114,8 +1255,11 @@ export default function ProjectDetailPage() {
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-2">
                 {tasks.map(task => {
-                  const canDrag = (user?.role === 'CHEF' && project.team.some(t => t.id === user.id)) ||
-                    (user?.role === 'COLLABORATEUR' && task.assigneeId === user.id)
+                   const canDrag = 
+                     (user?.role === 'CHEF' && project.team.some(t => t.id === user.id)) ||
+                     (user?.role === 'COLLABORATEUR' && 
+                      task.assigneeId === user.id && 
+                      task.status !== 'IN_REVIEW')
                   const priorityColors: Record<string, string> = {
                     HIGH: '#EF4444',
                     MEDIUM: '#F59E0B',
@@ -1136,7 +1280,7 @@ export default function ProjectDetailPage() {
                             {canDrag && <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
                             <span className="font-medium text-sm truncate">{task.title}</span>
                           </div>
-                          {canManageTasks && (user?.role === 'CHEF' || task.assigneeId === user?.id) && (
+                           {user?.role === 'CHEF' && (
                             <div className="flex items-center gap-1 flex-shrink-0">
                               {task.submittedForReview && user?.role === 'CHEF' && (
                                 <Button
@@ -1149,22 +1293,49 @@ export default function ProjectDetailPage() {
                                   <Eye className="h-3 w-3 text-amber-600" />
                                 </Button>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6"
-                                onClick={() => handleDeleteTask(task.id)}
-                              >
-                                <Trash2 className="h-3 w-3 text-muted-foreground" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                        {task.description && (
-                          <p className="text-xs text-muted-foreground line-clamp-2">
-                            {task.description}
-                          </p>
-                        )}
+                               <Button
+                                 variant="ghost"
+                                 size="icon"
+                                 className="h-6 w-6"
+                                 onClick={() => handleDeleteTask(task.id)}
+                               >
+                                 <Trash2 className="h-3 w-3 text-muted-foreground" />
+                               </Button>
+                             </div>
+                           )}
+
+                          </div>
+                         {task.description && (
+                           <p className="text-xs text-muted-foreground line-clamp-2">
+                             {task.description}
+                           </p>
+                         )}
+
+                         {/* Deliverable info for CHEF on IN_REVIEW */}
+                         {task.status === 'IN_REVIEW' && (task.deliverableLink || task.deliverableNote) && user?.role === 'CHEF' && (
+                           <div className="text-xs bg-amber-50 dark:bg-amber-950 p-2 rounded border border-amber-200">
+                             {task.deliverableLink && (
+                               <a 
+                                 href={task.deliverableLink} 
+                                 target="_blank" 
+                                 rel="noopener noreferrer"
+                                 className="text-blue-600 hover:underline block truncate"
+                               >
+                                 📎 {task.deliverableLink}
+                               </a>
+                             )}
+                             {task.deliverableNote && (
+                               <p className="text-muted-foreground mt-1">{task.deliverableNote}</p>
+                             )}
+                           </div>
+                         )}
+
+                         {/* Show review comment on rejected tasks */}
+                         {task.status === 'IN_PROGRESS' && task.reviewComment && (
+                           <div className="text-xs bg-red-50 dark:bg-red-950 p-2 rounded border border-red-200 text-red-700">
+                             <strong>Commentaire du chef :</strong> {task.reviewComment}
+                           </div>
+                         )}
                         {task.requiredSkills.length > 0 && (
                           <div className="space-y-1.5">
                             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1201,17 +1372,53 @@ export default function ProjectDetailPage() {
                             </div>
                           )}
                         </div>
-                        {task.assignee && (
-                          <div className="flex items-center gap-2 pt-1 border-t" style={{ borderColor: 'var(--color-border)' }}>
-                            <Avatar className="h-5 w-5">
-                              <AvatarFallback className="text-[10px]">
-                                {getInitials(task.assignee.name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="text-xs text-muted-foreground truncate">{task.assignee.name}</span>
-                          </div>
-                        )}
-                      </CardContent>
+                         {task.assignee && (
+                           <div className="flex items-center gap-2 pt-1 border-t" style={{ borderColor: 'var(--color-border)' }}>
+                             <Avatar className="h-5 w-5">
+                               <AvatarFallback className="text-[10px]">
+                                 {getInitials(task.assignee.name)}
+                               </AvatarFallback>
+                             </Avatar>
+                             <span className="text-xs text-muted-foreground truncate">{task.assignee.name}</span>
+                           </div>
+                         )}
+
+                           {/* Primary Action Button - Dynamic based on status (same style as Soumettre pour révision) */}
+                           <div className="pt-2">
+                             {/* COLLABORATEUR actions */}
+                             {user?.role === 'COLLABORATEUR' && task.assigneeId === user.id && (
+                               <>
+                                 {task.status === 'TODO' && (
+                                    <Button
+                                      size="sm"
+                                      className="w-full text-xs h-8 bg-white text-[#1B3A6B] border border-[#1B3A6B] hover:bg-[#F59E0B] hover:text-white hover:border-[#F59E0B] transition-all duration-200 active:scale-[0.985]"
+                                      onClick={() => changeTaskStatus(task.id, 'IN_PROGRESS')}
+                                    >
+                                      Commencer la tâche
+                                    </Button>
+                                  )}
+
+                                  {task.status === 'IN_PROGRESS' && (
+                                    <Button
+                                      size="sm"
+                                      className="w-full text-xs h-8 bg-white text-[#1B3A6B] border border-[#1B3A6B] hover:bg-[#F59E0B] hover:text-white hover:border-[#F59E0B] transition-all duration-200 active:scale-[0.985] flex items-center justify-center gap-1"
+                                      onClick={() => openSubmitReviewModal(task)}
+                                    >
+                                      Soumettre pour révision
+                                    </Button>
+                                  )}
+
+                                 {task.status === 'IN_REVIEW' && (
+                                   <div className="text-xs text-center py-1.5 rounded bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200">
+                                     En attente de révision par votre chef
+                                   </div>
+                                 )}
+                               </>
+                             )}
+
+                             {/* CHEF has no primary button here — uses the eye icon instead */}
+                           </div>
+                       </CardContent>
                     </Card>
                   )
                 })}
@@ -1227,7 +1434,14 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Task Review Dialog for CHEF/RH */}
-      <Dialog open={isReviewDialogOpen} onOpenChange={setIsReviewDialogOpen}>
+      <Dialog open={isReviewDialogOpen} onOpenChange={(open) => {
+        setIsReviewDialogOpen(open)
+        if (!open) {
+          setReviewComment('')
+          setReviewScore('')
+          setReviewingTask(null)
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Réviser la tâche</DialogTitle>
@@ -1250,17 +1464,64 @@ export default function ProjectDetailPage() {
                     </Badge>
                   )}
                 </div>
-              </div>
+               </div>
 
-              <div className="space-y-2">
-                <Label>Commentaire (optionnel)</Label>
-                <Textarea
-                  value={reviewComment}
-                  onChange={(e) => setReviewComment(e.target.value)}
-                  placeholder="Ajouter un commentaire pour le collaborateur..."
-                  rows={3}
-                />
-              </div>
+               {/* Deliverable info */}
+               {(reviewingTask.deliverableLink || reviewingTask.deliverableNote) && (
+                 <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg border border-amber-200">
+                   <div className="font-medium text-sm mb-2 flex items-center gap-2">
+                     <Eye className="h-4 w-4" /> Livrable soumis
+                   </div>
+                   
+                   {reviewingTask.deliverableLink && (
+                     <a 
+                       href={reviewingTask.deliverableLink} 
+                       target="_blank" 
+                       rel="noopener noreferrer" 
+                       className="text-blue-600 hover:underline block text-sm mb-2 break-all"
+                     >
+                       🔗 {reviewingTask.deliverableLink}
+                     </a>
+                   )}
+                   
+                   {reviewingTask.deliverableNote && (
+                     <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                       {reviewingTask.deliverableNote}
+                     </p>
+                   )}
+                 </div>
+                )}
+
+                {/* Task Score - Required for APPROVE / Accepter */}
+                <div className="space-y-2">
+                  <Label>Score de la tâche (1-10) <span className="text-red-500">*</span></Label>
+                  <div className="flex flex-wrap gap-2">
+                    {[1,2,3,4,5,6,7,8,9,10].map((num) => (
+                      <Button
+                        key={num}
+                        type="button"
+                        variant={reviewScore === String(num) ? "default" : "outline"}
+                        size="sm"
+                        className={`h-9 w-9 p-0 text-sm ${reviewScore === String(num) ? 'bg-[#1B3A6B] text-white' : ''}`}
+                        onClick={() => setReviewScore(String(num))}
+                        disabled={isReviewing}
+                      >
+                        {num}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Requis pour approuver la tâche</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Commentaire (optionnel)</Label>
+                 <Textarea
+                   value={reviewComment}
+                   onChange={(e) => setReviewComment(e.target.value)}
+                   placeholder="Ajouter un commentaire pour le collaborateur..."
+                   rows={3}
+                 />
+               </div>
 
               <div className="flex gap-3 justify-end">
                 <Button
@@ -1269,18 +1530,134 @@ export default function ProjectDetailPage() {
                   disabled={isReviewing}
                   className="border-orange-500 text-orange-600 hover:bg-orange-50"
                 >
-                  🔄 Demander une révision
+                   Demander une révision
                 </Button>
-                <Button
-                  onClick={() => handleReviewTask('accept')}
-                  disabled={isReviewing}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  ✅ Accepter
-                </Button>
+                 <Button
+                   onClick={() => handleReviewTask('accept')}
+                   disabled={isReviewing || !reviewScore || Number(reviewScore) < 1 || Number(reviewScore) > 10}
+                   className="bg-green-600 hover:bg-green-700"
+                 >
+                    Accepter
+                 </Button>
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Unified Move Task Dialog (used for both dragging and buttons) */}
+      <Dialog open={isMoveDialogOpen} onOpenChange={setIsMoveDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Déplacer la tâche</DialogTitle>
+            <DialogDescription>
+              Choisissez le nouveau statut pour « {taskToMove?.title} »
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-3 py-4">
+            {(['TODO', 'IN_PROGRESS', 'IN_REVIEW', 'DONE'] as const).map((status) => {
+              const isCurrent = taskToMove?.status === status
+              const isSelected = selectedStatus === status
+
+              return (
+                <button
+                  key={status}
+                  onClick={() => setSelectedStatus(status)}
+                  disabled={isCurrent}
+                  className={`p-4 rounded-lg border text-left transition-all ${
+                    isSelected 
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' 
+                      : 'border-gray-200 hover:border-gray-300'
+                  } ${isCurrent ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="font-medium text-sm">
+                    {status === 'TODO' && '📋 À faire'}
+                    {status === 'IN_PROGRESS' && '⏳ En cours'}
+                     {status === 'IN_REVIEW' && 'En révision'}
+                     {status === 'DONE' && 'Terminé'}
+                  </div>
+                  {isCurrent && (
+                    <div className="text-[11px] text-muted-foreground mt-1">Statut actuel</div>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsMoveDialogOpen(false)}>
+              Annuler
+            </Button>
+            <Button
+              disabled={!taskToMove || selectedStatus === taskToMove.status}
+              onClick={async () => {
+                if (taskToMove && selectedStatus !== taskToMove.status) {
+                  await changeTaskStatus(taskToMove.id, selectedStatus)
+                }
+                setIsMoveDialogOpen(false)
+                setTaskToMove(null)
+              }}
+            >
+              Confirmer le déplacement
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Submit for Review Modal - COLLABORATEUR */}
+      <Dialog open={isSubmitReviewOpen} onOpenChange={(open) => {
+        setIsSubmitReviewOpen(open)
+        if (!open) {
+          setSubmitReviewError('')
+          setDeliverableLink('')
+          setDeliverableNote('')
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Soumettre pour révision</DialogTitle>
+            <DialogDescription>
+              Fournissez un lien et/ou une note pour votre livrable.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>Lien du livrable (GitHub PR, Google Doc...)</Label>
+              <Input
+                placeholder="https://..."
+                value={deliverableLink}
+                onChange={(e) => setDeliverableLink(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <Label>Note ou description</Label>
+              <Textarea
+                placeholder="Description du travail réalisé..."
+                value={deliverableNote}
+                onChange={(e) => setDeliverableNote(e.target.value)}
+                rows={4}
+              />
+            </div>
+
+            {submitReviewError && (
+              <p className="text-sm text-red-600">{submitReviewError}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSubmitReviewOpen(false)}>
+              Annuler
+            </Button>
+            <Button 
+              onClick={handleSubmitForReview} 
+              disabled={isSubmittingReview || (!deliverableLink && !deliverableNote)}
+            >
+              {isSubmittingReview ? "Envoi..." : "Soumettre pour révision"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

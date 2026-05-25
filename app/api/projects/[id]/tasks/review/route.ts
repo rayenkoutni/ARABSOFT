@@ -11,7 +11,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const { id: projectId } = await params
   const body = await req.json()
-  const { taskId, action, comment } = body
+  const { taskId, action, comment, taskScore } = body
 
   if (!taskId || !action) {
     return NextResponse.json({ error: "taskId and action are required" }, { status: 400 })
@@ -31,7 +31,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       where: { managerId: user.id },
       select: { id: true }
     })
-    const teamIds = teamMembers.map(e => e.id)
+    const teamIds = teamMembers.map((e: { id: string }) => e.id)
     const isAuthorized = 
       project.createdById === user.id ||
       project.managerId === user.id ||
@@ -66,7 +66,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         where: { managerId: user.id },
         select: { id: true }
       })
-      const teamIds = teamMembers.map(e => e.id)
+      const teamIds = teamMembers.map((e: { id: string }) => e.id)
       
       if (!teamIds.includes(task.assigneeId)) {
         return NextResponse.json({ error: "Vous ne pouvez pas réviser les tâches d'autres équipes" }, { status: 403 })
@@ -77,6 +77,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const projectName = task.project?.name || "Projet"
 
     if (action === "accept") {
+      const score = Number(taskScore)
+      if (!taskScore || isNaN(score) || score < 1 || score > 10) {
+        return NextResponse.json(
+          { error: "Un score entre 1 et 10 est requis pour approuver une tâche" },
+          { status: 400 }
+        )
+      }
+
       // Accept the task - mark as DONE
       updatedTask = await prisma.task.update({
         where: { id: taskId },
@@ -84,7 +92,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           status: "DONE",
           submittedForReview: false,
           reviewedById: user.id,
-          reviewedAt: new Date()
+          reviewedAt: new Date(),
+          taskScore: score,
         } as any
       })
 
@@ -123,7 +132,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // Update project progress
     const allTasks = await prisma.task.findMany({ where: { projectId } })
-    const completedTasks = allTasks.filter(t => t.status === "DONE").length
+    const completedTasks = allTasks.filter((t: { status: string }) => t.status === "DONE").length
     const progress = allTasks.length > 0 ? Math.round((completedTasks / allTasks.length) * 100) : 0
 
     await prisma.project.update({

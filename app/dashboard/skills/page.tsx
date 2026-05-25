@@ -686,7 +686,7 @@ export default function SkillsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Collaborateur</TableHead>
-                    <TableHead>Departement</TableHead>
+                    <TableHead className="hidden lg:table-cell">Departement</TableHead>
                     <TableHead>Competences actuelles</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -702,14 +702,14 @@ export default function SkillsPage() {
                           </p>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p>{employee.department || 'Non renseigne'}</p>
-                          {employee.manager?.name && (
-                            <p className="text-sm text-muted-foreground">Chef : {employee.manager.name}</p>
-                          )}
-                        </div>
-                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                         <div className="space-y-1">
+                           <p>{employee.department || 'Non renseigne'}</p>
+                           {employee.manager?.name && (
+                             <p className="text-sm text-muted-foreground">Chef : {employee.manager.name}</p>
+                           )}
+                         </div>
+                       </TableCell>
                       <TableCell className="max-w-xl">
                         <SkillBadgeList skills={employee.skills} />
                       </TableCell>
@@ -791,7 +791,7 @@ export default function SkillsPage() {
                       <TableHead className="w-[12%]">Type</TableHead>
                       <TableHead className="w-[12%]">Statut</TableHead>
                       <TableHead className="w-[28%]">Description</TableHead>
-                      <TableHead className="w-[12%]">Mise a jour</TableHead>
+                        <TableHead className="w-[12%] hidden lg:table-cell">Mise a jour</TableHead>
                       <TableHead className="w-[18%] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -840,7 +840,7 @@ export default function SkillsPage() {
                               {skill.description || 'Aucune description'}
                             </span>
                           </TableCell>
-                          <TableCell className="align-top text-sm text-muted-foreground">
+                          <TableCell className="align-top text-sm text-muted-foreground hidden lg:table-cell">
                             {format(new Date(skill.updatedAt || new Date()), 'dd MMM yyyy', {
                               locale: fr,
                             })}
@@ -984,7 +984,7 @@ export default function SkillsPage() {
 
       {dialogLoading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-          <div className="rounded-xl bg-white p-6 shadow-lg">
+           <div className="rounded-xl bg-white p-3 md:p-4 lg:p-5 shadow-lg">
             <BrandedLoading />
           </div>
         </div>

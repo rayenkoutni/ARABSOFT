@@ -6,15 +6,20 @@ const __dirname = path.dirname(__filename)
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: {
     unoptimized: true,
   },
   turbopack: {
     root: __dirname,
   },
+  experimental: {
+    optimisticClientCache: true,
+    optimizePackageImports: ["lucide-react", "date-fns", "recharts"],
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  output: 'standalone',
 }
 
 export default nextConfig

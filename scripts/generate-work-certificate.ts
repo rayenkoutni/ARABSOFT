@@ -10,8 +10,8 @@ async function main() {
 
   const pdfBuffer = await generateWorkCertificatePdf({
     employeeName: 'Sarra Ben Youssef',
-    employeePosition: 'Ingénieure logiciel',
-    employeeDepartment: 'Ingénierie logicielle',
+    employeePosition: 'Ingenieure logiciel',
+    employeeDepartment: 'Ingenierie logicielle',
     employeeSalutation: 'Madame',
     hireDate: '2022-03-14',
     companyName: 'ARAB SOFT',
@@ -24,10 +24,10 @@ async function main() {
   })
 
   await writeFile(outputPath, pdfBuffer)
-  console.log(`PDF de test généré : ${outputPath}`)
+  console.log(`PDF de test genere : ${outputPath}`)
 }
 
 void main().catch((error) => {
-  console.error('Échec de la génération du PDF de test :', error)
+  console.error('Echec de la generation du PDF de test :', error)
   process.exitCode = 1
 })

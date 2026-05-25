@@ -121,7 +121,38 @@ async function main() {
   await ensurePortIsAvailable()
   await removeStaleLock()
 
-  const child = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
+  // Pre-compile server.ts to JS, then run with plain Node.js.
+  // The --import tsx approach registers ESM loader hooks that intercept ALL
+  // module resolution in the process. These hooks append query strings to
+  // file:// URLs, which breaks next/font's fileURLToPath(). By compiling to
+  // JS first, we avoid tsx's hooks entirely at runtime.
+  const compiledDir = path.join(projectRoot, ".next", "server-compiled")
+  const compiledFile = path.join(compiledDir, "server.mjs")
+
+  await fs.mkdir(compiledDir, { recursive: true })
+
+  const esbuild = await import("esbuild")
+  await esbuild.build({
+    entryPoints: [path.join(projectRoot, "server.ts")],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: compiledFile,
+    packages: "external",
+    sourcemap: true,
+    // Resolve @/* path aliases (from tsconfig) to project root
+    alias: { "@": projectRoot },
+    // Ensure __dirname / __filename work in the compiled output
+    banner: {
+      js: [
+        'import { fileURLToPath as __fileURLToPath } from "url";',
+        'import { dirname as __pathDirname } from "path";',
+      ].join("\n"),
+    },
+    logLevel: "warning",
+  })
+
+  const child = spawn(process.execPath, [compiledFile], {
     cwd: projectRoot,
     stdio: "inherit",
   })

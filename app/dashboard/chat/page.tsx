@@ -99,6 +99,9 @@ export default function ChatPage() {
 
   // Set isClient to true after hydration
   useEffect(() => {
+    if (socket) {
+      console.log('✅ ChatPage using socket:', socket.id)
+    }
     setIsClient(true)
     // Initialize audio context for sound notifications
     if (typeof window !== 'undefined') {
@@ -346,10 +349,26 @@ export default function ChatPage() {
   }
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation || !socket || !user) return
+    if (!newMessage.trim() || !selectedConversation || !socket || !user) {
+      console.warn('🚫 Send blocked:', { 
+        hasMessage: !!newMessage.trim(), 
+        hasConv: !!selectedConversation, 
+        hasSocket: !!socket, 
+        hasUser: !!user 
+      })
+      return
+    }
 
     const recipient = selectedConversation.participants.find(p => p.id !== user.id)
     if (!recipient) return
+
+    console.log('📤 Emitting send_message:', {
+      conversationId: selectedConversation.id,
+      content: newMessage.trim(),
+      recipientId: recipient.id,
+      socketConnected: socket.connected,
+      socketId: socket.id
+    })
 
     socket.emit('send_message', {
       conversationId: selectedConversation.id,

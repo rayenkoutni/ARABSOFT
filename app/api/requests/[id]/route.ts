@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
+import { Prisma } from "@prisma/client"
 import { getCurrentUser } from "@/lib/getCurrentUser"
 import { calculateLeaveBusinessDays, isLeaveRequestType, parseDateOnlyToUtcDate } from "@/lib/leave-request"
 import { prisma } from "@/lib/prisma"
 import { requestInputSchema } from "@/lib/request-validation"
-import { getSlaDeadline } from "@/lib/sla"
+import { slaService } from "@/lib/services/server/sla.service"
 
 const requestInclude = {
   employee: {
@@ -29,6 +30,11 @@ const requestInclude = {
   },
 }
 
+const requestIncludeWithoutGeneratedDocument = {
+  employee: requestInclude.employee,
+  history: requestInclude.history,
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -39,10 +45,28 @@ export async function GET(
   const { id } = await params
 
   try {
-    const request = await prisma.request.findUnique({
-      where: { id },
-      include: requestInclude,
-    })
+    let request
+
+    try {
+      request = await prisma.request.findUnique({
+        where: { id },
+        include: requestInclude,
+      })
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2021" &&
+        String(error.meta?.table).includes("GeneratedDocument")
+      ) {
+        console.warn("GeneratedDocument table is missing; retrying single request query without generatedDocument relation.")
+        request = await prisma.request.findUnique({
+          where: { id },
+          include: requestIncludeWithoutGeneratedDocument,
+        })
+      } else {
+        throw error
+      }
+    }
 
     if (!request) {
       return NextResponse.json({ error: "Request not found" }, { status: 404 })
@@ -166,10 +190,12 @@ export async function PUT(
         startDate,
         endDate,
         documentType: body.type === "DOCUMENT" ? body.documentType : null,
-        slaDeadline: await getSlaDeadline(body.type),
       },
       include: requestInclude,
     })
+
+    // Re-initialize SLA from DB config after possible type/status change
+    await slaService.initializeSla(id, body.type)
 
     return NextResponse.json(updatedRequest)
   } catch (error) {

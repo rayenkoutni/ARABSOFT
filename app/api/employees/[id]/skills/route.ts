@@ -63,6 +63,23 @@ export async function PATCH(
 
   try {
     const { id } = await params
+    const employee = await prisma.employee.findUnique({
+      where: { id },
+      select: { id: true, managerId: true },
+    })
+
+    if (!employee) {
+      return NextResponse.json({ error: "Collaborateur introuvable" }, { status: 404 })
+    }
+
+    const canUpdate =
+      user.role === Role.RH ||
+      (user.role === Role.CHEF && employee.managerId === user.id)
+
+    if (!canUpdate) {
+      return NextResponse.json({ error: "Accès interdit" }, { status: 403 })
+    }
+
     const input = employeeSkillChangeBatchSchema.parse(await req.json())
 
     const profile = await prisma.$transaction((tx: Prisma.TransactionClient) =>

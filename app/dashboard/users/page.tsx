@@ -57,6 +57,16 @@ interface Employee {
   leaveBalance: number
   onLeave: boolean
   avatar: string | null
+  salaryGradeId?: string | null
+  salaryOverride?: number | null
+}
+
+interface SalaryGrade {
+  id: string
+  role: string
+  level: number
+  baseSalary: number
+  description?: string | null
 }
 
 function mapEmployeeListResponse(payload: unknown): Employee[] {
@@ -79,6 +89,8 @@ function mapEmployeeListResponse(payload: unknown): Employee[] {
       leaveBalance: typeof item.leaveBalance === 'number' ? item.leaveBalance : 0,
       onLeave: Boolean(item.onLeave),
       avatar: typeof item.avatar === 'string' ? item.avatar : null,
+      salaryGradeId: typeof item.salaryGradeId === 'string' ? item.salaryGradeId : null,
+      salaryOverride: typeof item.salaryOverride === 'number' ? item.salaryOverride : null,
     }))
     .filter((employee) => employee.id && employee.name && employee.email)
 }
@@ -111,6 +123,7 @@ export default function UsersPage() {
   const { user } = useAuth()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [technicalSkillsCatalog, setTechnicalSkillsCatalog] = useState<TechnicalSkillCatalogItem[]>([])
+  const [salaryGrades, setSalaryGrades] = useState<SalaryGrade[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSkillsLoading, setIsSkillsLoading] = useState(false)
 
@@ -165,6 +178,8 @@ export default function UsersPage() {
     position: '',
     managerId: '',
     hireDate: '',
+    salaryGradeId: null as string | null,
+    salaryOverride: null as number | null,
   })
   const hireDateMax = getTodayDateInputMax()
 
@@ -212,10 +227,23 @@ export default function UsersPage() {
     }
   }
 
+  const loadSalaryGrades = async () => {
+    try {
+      const res = await fetch('/api/salary-grades', { cache: 'no-store' })
+      if (res.ok) {
+        const data = await res.json()
+        setSalaryGrades(data)
+      }
+    } catch {
+      // silent fail, grades optional for now
+    }
+  }
+
   useEffect(() => {
     if (user) {
       loadEmployees()
       loadTechnicalSkillsCatalog()
+      loadSalaryGrades()
     }
   }, [user])
 
@@ -295,6 +323,8 @@ export default function UsersPage() {
       position: emp.position || '',
       managerId: emp.managerId || '',
       hireDate: toDateInputValue(emp.hireDate),
+      salaryGradeId: emp.salaryGradeId || null,
+      salaryOverride: emp.salaryOverride || null,
     })
     setEditError('')
   }
@@ -433,9 +463,9 @@ export default function UsersPage() {
                    <TableHead className="w-12"></TableHead>
                    <TableHead>Nom</TableHead>
                    <TableHead>Email</TableHead>
-                   <TableHead>Téléphone</TableHead>
+                    <TableHead className="hidden lg:table-cell">Téléphone</TableHead>
                    <TableHead>Rôle</TableHead>
-                   <TableHead>Département</TableHead>
+                    <TableHead className="hidden lg:table-cell">Département</TableHead>
                    <TableHead>Statut</TableHead>
                    <TableHead className="text-right">Actions</TableHead>
                  </TableRow>
@@ -450,13 +480,13 @@ export default function UsersPage() {
                        </TableCell>
                        <TableCell className="font-medium">{emp.name}</TableCell>
                        <TableCell>{emp.email}</TableCell>
-                      <TableCell>{emp.phone || '—'}</TableCell>
+                       <TableCell className="hidden lg:table-cell">{emp.phone || '—'}</TableCell>
                       <TableCell>
                         <Badge className="border-0" style={roleColor.style}>
                           {roleLabels[emp.role] || emp.role}
                         </Badge>
                       </TableCell>
-                      <TableCell>{emp.department || '—'}</TableCell>
+                       <TableCell className="hidden lg:table-cell">{emp.department || '—'}</TableCell>
                       <TableCell>
                         <Badge
                           className="border-0"
@@ -541,6 +571,7 @@ export default function UsersPage() {
         chefs={chefs}
         collaborators={collaborators}
         technicalSkillsCatalog={technicalSkillsCatalog}
+        salaryGrades={salaryGrades}
         onOpenChange={(open) => { if (!open) closeAllDialogs() }}
         onSubmit={handleCreate}
         onFormDataChange={setFormData}
@@ -646,11 +677,51 @@ export default function UsersPage() {
                 </p>
               )}
             </div>
-            <div className="space-y-2">
-              <Label>Poste</Label>
-              <Input value={editFormData.position || ''} onChange={e => setEditFormData({ ...editFormData, position: e.target.value })} />
-            </div>
-            {editFormData.role === 'COLLABORATEUR' && (
+             <div className="space-y-2">
+               <Label>Poste</Label>
+               <Input value={editFormData.position || ''} onChange={e => setEditFormData({ ...editFormData, position: e.target.value })} />
+             </div>
+
+             {/* Salary Grade in Edit */}
+             <div className="space-y-4 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)' }}>
+               <div>
+                 <Label>Grade Salarial</Label>
+                 <Select
+                   value={editFormData.salaryGradeId || ''}
+                   onValueChange={(val) => {
+                     const grade = salaryGrades.find(g => g.id === val)
+                     setEditFormData({
+                       ...editFormData,
+                       salaryGradeId: val || null,
+                       role: grade ? grade.role : editFormData.role,
+                     })
+                   }}
+                 >
+                   <SelectTrigger><SelectValue placeholder="Sélectionner un grade" /></SelectTrigger>
+                   <SelectContent>
+                     {salaryGrades.map(g => (
+                       <SelectItem key={g.id} value={g.id}>
+                         {g.role} — Niv.{g.level} ({g.baseSalary}€)
+                       </SelectItem>
+                     ))}
+                   </SelectContent>
+                 </Select>
+               </div>
+               <div>
+                 <Label>Salaire Override (optionnel)</Label>
+                 <Input
+                   type="number"
+                   step="0.01"
+                   value={editFormData.salaryOverride ?? ''}
+                   onChange={e => setEditFormData({ 
+                     ...editFormData, 
+                     salaryOverride: e.target.value ? parseFloat(e.target.value) : null 
+                   })}
+                 />
+               </div>
+             </div>
+
+             {editFormData.role === 'COLLABORATEUR' && (
               <div className="space-y-2">
                 <Label>Chef (Manager)</Label>
                 <Select value={editFormData.managerId} onValueChange={v => setEditFormData({ ...editFormData, managerId: v })}>

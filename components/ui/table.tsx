@@ -1,13 +1,37 @@
 'use client'
 
 import * as React from 'react'
+import { useEffect, useRef } from 'react'
 
 import { cn } from '@/lib/utils'
 
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const table = container.querySelector('table')
+    if (!table) return
+
+    const headers = table.querySelectorAll('thead th')
+    const headerTexts = Array.from(headers).map(th => th.textContent?.trim() || '')
+
+    const rows = table.querySelectorAll('tbody tr')
+    rows.forEach(row => {
+      const cells = row.querySelectorAll('td')
+      cells.forEach((cell, index) => {
+        if (headerTexts[index]) {
+          cell.setAttribute('data-label', headerTexts[index])
+        }
+      })
+    })
+  })
+
   return (
     <div
       data-slot="table-container"
+      ref={containerRef}
       className="relative w-full overflow-x-auto"
     >
       <table

@@ -5,9 +5,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { RequestWorkflowTrail } from '@/components/request-workflow-trail'
 import { useAuth } from '@/lib'
+import { getDocumentTypeLabel } from '@/lib/document-type'
 import { canUserDownloadGeneratedDocument, canUserExamineRequest } from '@/lib/request-actions'
 import { formatRequestDateTime } from '@/lib/request-date'
-import { getDocumentTypeLabel } from '@/lib/document-type'
 import { Request, RequestStatus } from '@/lib/types'
 import { parseRequestContent } from '@/lib/request-content'
 import { buildRequestWorkflowSteps } from '@/lib/request-workflow'
@@ -16,12 +16,13 @@ import { ChevronRight, Download } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 function formatSlaStatus(request: Request): string | null {
-  if (!request.slaDeadline || request.slaBreached) return null
-  const deadline = new Date(request.slaDeadline)
-  const now = new Date()
-  const hours = Math.floor((deadline.getTime() - now.getTime()) / (1000 * 60 * 60))
-  if (hours < 0) return 'Expiré'
-  if (hours <= 6) return `Expire dans ${hours}h`
+  if (request.slaStatus === 'BREACHED') return 'Depasse'
+  if (request.slaStatus === 'WARNING' && request.slaDeadline) {
+    const deadline = new Date(request.slaDeadline)
+    const now = new Date()
+    const hours = Math.floor((deadline.getTime() - now.getTime()) / (1000 * 60 * 60))
+    if (hours <= 6 && hours > 0) return `Expire dans ${hours}h`
+  }
   return null
 }
 
@@ -37,15 +38,15 @@ const statusConfig: Record<RequestStatus, { label: string; style: React.CSSPrope
   BROUILLON: { label: 'Brouillon', style: { backgroundColor: '#F3F4F6', color: '#374151' } },
   EN_ATTENTE_CHEF: { label: 'En attente Chef', style: { backgroundColor: '#FEF3C7', color: '#92400E' } },
   EN_ATTENTE_RH: { label: 'En attente RH', style: { backgroundColor: '#DBEAFE', color: '#1E40AF' } },
-  APPROUVE: { label: 'Approuvé', style: { backgroundColor: '#D1FAE5', color: '#065F46' } },
-  REJETE: { label: 'Rejeté', style: { backgroundColor: '#FEE2E2', color: '#991B1B' } },
+  APPROUVE: { label: 'Approuve', style: { backgroundColor: '#D1FAE5', color: '#065F46' } },
+  REJETE: { label: 'Rejete', style: { backgroundColor: '#FEE2E2', color: '#991B1B' } },
 }
 
 const typeLabels: Record<string, string> = {
-  CONGE: 'Congé',
+  CONGE: 'Conge',
   AUTORISATION: 'Autorisation',
   DOCUMENT: 'Document RH',
-  PRET: 'Prêt',
+  PRET: 'Pret',
 }
 
 export function RequestCard({ request, onView, showApprovalAction, onExamine, onDownload }: RequestCardProps) {
@@ -55,6 +56,7 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
   const { title, description } = parseRequestContent(request)
   const workflowSteps = buildRequestWorkflowSteps(request, user?.id)
   const canExamine = canUserExamineRequest(request, user?.role)
+  const canDownloadDocument = canUserDownloadGeneratedDocument(request, user)
   const slaStatus = formatSlaStatus(request)
   const isLeaveRequest = isLeaveRequestType(request.type)
   const documentTypeLabel = request.type === 'DOCUMENT' ? getDocumentTypeLabel(request.documentType) : null
@@ -63,7 +65,6 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
     endDate: request.endDate,
     leaveBalance: request.employee?.leaveBalance,
   })
-  const canDownloadDocument = canUserDownloadGeneratedDocument(request, user)
 
   const isDraft = request.status === 'BROUILLON'
 
@@ -76,7 +77,7 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
   }
 
   return (
-    <Card 
+    <Card
       className={`flex w-full min-w-0 max-w-full flex-col gap-4 overflow-hidden p-4 transition-shadow hover:shadow-md ${isDraft ? 'cursor-pointer' : ''}`}
       onClick={handleClick}
     >
@@ -115,11 +116,16 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
           <Badge className="border-0" style={status.style}>
             {status.label}
           </Badge>
-          {request.slaBreached && (
-            <Badge variant="destructive">SLA Dépassé</Badge>
+          {request.slaStatus === 'BREACHED' && (
+            <Badge variant="destructive">SLA Depasse</Badge>
           )}
-          {slaStatus && (
+          {request.slaStatus === 'WARNING' && slaStatus && (
             <span className="text-xs text-amber-600 font-medium">{slaStatus}</span>
+          )}
+          {request.currentOwner && (
+            <Badge variant="outline" className="text-xs">
+              {request.currentOwner}
+            </Badge>
           )}
           <span className="shrink-0 text-xs text-muted-foreground">
             {formatRequestDateTime(request.createdAt)}
@@ -155,7 +161,6 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
         </div>
       </div>
 
-      {/* Examiner button — navigates to My Approvals with modal pre-open */}
       <RequestWorkflowTrail steps={workflowSteps} />
       {onExamine && canExamine && (
         <div className="pt-2 border-t flex gap-2">
@@ -170,7 +175,6 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
         </div>
       )}
 
-      {/* Legacy approval action for non-navigating contexts (e.g. RH approvals page) */}
       {showApprovalAction && !onExamine && canExamine && (
         <div className="pt-2 border-t flex gap-2">
           <Button size="sm" variant="outline" className="flex-1">

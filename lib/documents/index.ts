@@ -1,2 +1,2 @@
-export * from './work-certificate'
 export * from './generated-document-storage'
+export * from './work-certificate'

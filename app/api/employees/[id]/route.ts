@@ -2,10 +2,51 @@ import { prisma } from "@/lib/prisma"
 import { getCurrentUser } from "@/lib/getCurrentUser"
 import { logAudit } from "@/lib/audit"
 import { NextResponse } from "next/server"
+import { Prisma } from "@prisma/client"
 import bcrypt from "bcryptjs"
+import crypto from "crypto"
 import { sendEmail } from "@/lib/mailer"
 import { employeeUpdateInputSchema } from "@/lib/skills"
 import { ZodError } from "zod"
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: "Non autorisé" }, { status: 401 })
+
+  const { id } = await params
+
+  // Permission checks
+  if (user.role === "COLLABORATEUR" && user.id !== id) {
+    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+  }
+
+  if (user.role === "CHEF") {
+    const employee = await prisma.employee.findUnique({
+      where: { id },
+      select: { managerId: true },
+    })
+    if (!employee || employee.managerId !== user.id) {
+      return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+    }
+  }
+
+  const employee = await prisma.employee.findUnique({
+    where: { id },
+    include: {
+      manager: { select: { id: true, name: true } },
+      salaryGrade: true,
+    },
+  })
+
+  if (!employee) {
+    return NextResponse.json({ error: "Employé introuvable" }, { status: 404 })
+  }
+
+  return NextResponse.json(employee)
+}
 
 function buildPasswordResetEmailHtml(data: { name: string; email: string; tempPassword: string; loginUrl: string }) {
   return `<div style="font-family: system-ui, sans-serif, Arial; font-size: 14px; color: #212121">
@@ -61,7 +102,13 @@ export async function PUT(
     return NextResponse.json({ error: "Payload employe invalide" }, { status: 400 })
   }
 
-  const { name, email, phone, role, department, position, managerId, hireDate, resetPassword } = body
+  const { name, email, phone, role, department, position, managerId, hireDate, resetPassword, salaryGradeId, salaryOverride } = body
+
+  let finalRole = role
+  if (salaryGradeId) {
+    const grade = await prisma.salaryGrade.findUnique({ where: { id: salaryGradeId } })
+    if (grade) finalRole = grade.role
+  }
 
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: "Employe introuvable" }, { status: 404 })
@@ -73,26 +120,40 @@ export async function PUT(
     }
   }
 
-  if (role && role !== existing.role && (role === "COLLABORATEUR" || existing.role === "COLLABORATEUR")) {
-    return NextResponse.json(
-      { error: "Les changements de role impliquant un collaborateur avec competences ne sont pas pris en charge dans cette version." },
-      { status: 400 }
-    )
+  // Role change validation
+  if (role && role !== existing.role) {
+    // If changing to Collaborateur, ensure they have a manager
+    if (role === "COLLABORATEUR" && !managerId && !existing.managerId) {
+      return NextResponse.json(
+        { error: "Un collaborateur doit obligatoirement avoir un manager." },
+        { status: 400 }
+      )
+    }
+
+    // Role changes involving COLLABORATEUR require skill management (not implemented)
+    if (role === "COLLABORATEUR" || existing.role === "COLLABORATEUR") {
+      return NextResponse.json(
+        { error: "La migration automatique des competences lors d'un changement de role n'est pas encore supportee." },
+        { status: 400 }
+      )
+    }
   }
 
   const updateData: Record<string, unknown> = {}
   if (name !== undefined) updateData.name = name
   if (email !== undefined) updateData.email = email
   if (phone !== undefined) updateData.phone = phone || null
-  if (role !== undefined) updateData.role = role
+  if (finalRole !== undefined) updateData.role = finalRole
   if (department !== undefined) updateData.department = department || null
   if (position !== undefined) updateData.position = position || null
   if (managerId !== undefined) updateData.managerId = managerId || null
   if (hireDate !== undefined) updateData.hireDate = hireDate
+  if (salaryGradeId !== undefined) updateData.salaryGradeId = salaryGradeId || null
+  if (salaryOverride !== undefined) updateData.salaryOverride = salaryOverride ?? null
 
   let tempPassword: string | null = null
   if (resetPassword) {
-    tempPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4).toUpperCase()
+    tempPassword = crypto.randomBytes(6).toString("hex").toUpperCase()
     updateData.password = await bcrypt.hash(tempPassword, 10)
   }
 
@@ -101,7 +162,8 @@ export async function PUT(
     data: updateData,
     select: {
       id: true, name: true, email: true, phone: true, avatar: true, role: true,
-      department: true, position: true, managerId: true, hireDate: true, leaveBalance: true
+      department: true, position: true, managerId: true, hireDate: true, leaveBalance: true,
+      salaryGradeId: true, salaryOverride: true
     }
   })
 
@@ -152,25 +214,27 @@ export async function DELETE(
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: "Employe introuvable" }, { status: 404 })
 
-  await prisma.notification.deleteMany({ where: { employeeId: id } })
-  await prisma.requestHistory.deleteMany({ where: { actorId: id } })
-  await prisma.employeeSkillHistory.deleteMany({ where: { actorId: id } })
-  await prisma.employeeSkillHistory.deleteMany({ where: { employeeId: id } })
-  await prisma.employeeSkill.deleteMany({ where: { employeeId: id } })
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.notification.deleteMany({ where: { employeeId: id } })
+    await tx.requestHistory.deleteMany({ where: { actorId: id } })
+    await tx.employeeSkillHistory.deleteMany({ where: { actorId: id } })
+    await tx.employeeSkillHistory.deleteMany({ where: { employeeId: id } })
+    await tx.employeeSkill.deleteMany({ where: { employeeId: id } })
 
-  const employeeRequests = await prisma.request.findMany({ where: { employeeId: id }, select: { id: true } })
-  const requestIds = employeeRequests.map((request: (typeof employeeRequests)[number]) => request.id)
-  if (requestIds.length > 0) {
-    await prisma.requestHistory.deleteMany({ where: { requestId: { in: requestIds } } })
-    await prisma.request.deleteMany({ where: { employeeId: id } })
-  }
+    const employeeRequests = await tx.request.findMany({ where: { employeeId: id }, select: { id: true } })
+    const requestIds = employeeRequests.map((r: { id: string }) => r.id)
+    if (requestIds.length > 0) {
+      await tx.requestHistory.deleteMany({ where: { requestId: { in: requestIds } } })
+      await tx.request.deleteMany({ where: { employeeId: id } })
+    }
 
-  await prisma.employee.updateMany({
-    where: { managerId: id },
-    data: { managerId: null }
+    await tx.employee.updateMany({
+      where: { managerId: id },
+      data: { managerId: null }
+    })
+
+    await tx.employee.delete({ where: { id } })
   })
-
-  await prisma.employee.delete({ where: { id } })
 
   logAudit({
     actorId: user.id,

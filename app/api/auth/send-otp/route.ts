@@ -1,50 +1,45 @@
 import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/getCurrentUser";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { sendEmail } from "@/lib/mailer";
 import { generateOTPEmail } from "@/lib/templates/otp-email";
 
-export async function POST(req: Request) {
+export async function POST(_req: Request) {
   try {
-    const body = await req.json();
-    const userId = body.userId;
-
-    if (!userId) {
-      return NextResponse.json({ error: "User ID is required." }, { status: 400 });
+    // ── Auth guard: user must already hold a valid session ─────────────────
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
 
     const employee = await prisma.employee.findUnique({
-      where: { id: userId },
+      where: { id: user.id },
     });
 
     if (!employee) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
-    if (!employee.email) {
-      return NextResponse.json(
-        { error: "User has no email address on file. Cannot send OTP." },
-        { status: 400 }
-      );
+    // ── Cooldown: skip if a fresh OTP still has > 9 minutes left ──────────
+    if (employee.otpExpiresAt) {
+      const minutesLeft = (employee.otpExpiresAt.getTime() - Date.now()) / (1000 * 60);
+      if (minutesLeft > 9) {
+        return NextResponse.json({ message: "OTP sent successfully." });
+      }
     }
 
-    // Generate a secure random 6-digit code
+    // ── Generate a cryptographically secure 6-digit code ──────────────────
     const code = Math.floor(100000 + Math.random() * 900000).toString().padStart(6, "0");
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
-
-    // Hash the code
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     const hashedCode = await bcrypt.hash(code, 10);
 
-    // Save to database
     await prisma.employee.update({
       where: { id: employee.id },
-      data: {
-        otpCode: hashedCode,
-        otpExpiresAt: expiresAt,
-      },
+      data: { otpCode: hashedCode, otpExpiresAt: expiresAt },
     });
 
-     // Send OTP via Email
+    // ── Send email ─────────────────────────────────────────────────────────
     try {
       await sendEmail({
         to: employee.email,
@@ -56,8 +51,9 @@ export async function POST(req: Request) {
       console.error("Failed to send OTP email:", err);
     }
 
-    // Always log to console for development convenience
-    console.log(`\n\n[DEV OTP LOG] User: ${employee.name} (${employee.email}) | Code: ${code}\n\n`);
+    if (process.env.NODE_ENV === "development") {
+      console.log(`\n[DEV OTP] ${employee.email} → ${code}\n`);
+    }
 
     return NextResponse.json({ message: "OTP sent successfully." });
   } catch (error) {

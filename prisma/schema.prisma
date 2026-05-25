@@ -33,6 +33,12 @@ enum ApprovalType {
   DIRECT_RH
 }
 
+enum SlaStatus {
+  MET
+  WARNING
+  BREACHED
+}
+
 enum TaskStatus {
   TODO
   IN_PROGRESS
@@ -75,6 +81,17 @@ enum EmployeeSkillHistoryAction {
   REMOVE
 }
 
+enum BonusType {
+  PERFORMANCE
+  ANNUAL
+  EXCEPTIONAL
+}
+
+enum PayslipPeriodType {
+  MONTHLY
+  ANNUAL
+}
+
 model Employee {
   id           String    @id @default(uuid())
   name         String
@@ -88,10 +105,12 @@ model Employee {
   department   String?
   position     String?
   managerId    String?
-  hireDate     DateTime
-  leaveBalance Float     @default(0)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  hireDate       DateTime
+  leaveBalance   Float     @default(0)
+  salaryGradeId  String?
+  salaryOverride Float?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   manager              Employee?          @relation("ManagerEmployees", fields: [managerId], references: [id])
   team                 Employee[]         @relation("ManagerEmployees")
@@ -112,6 +131,9 @@ model Employee {
   conversations        Conversation[]     @relation("ConversationParticipants")
   sentMessages         Message[]          @relation("MessageSender")
   messageReads         MessageRead[]      @relation("MessageReader")
+  salaryGrade          SalaryGrade?       @relation(fields: [salaryGradeId], references: [id])
+  bonuses              Bonus[]
+  payslips             Payslip[]
 }
 
 model Request {
@@ -127,14 +149,24 @@ model Request {
   endDate       DateTime?
   amount        Float?
   documentType  String?
-  slaDeadline   DateTime?
-  slaBreached   Boolean       @default(false)
+  slaDeadline         DateTime?
+  slaBreached         Boolean       @default(false)
+  slaNearingNotified  Boolean       @default(false)
+  currentOwner        String?       // CHEF or RH
+  slaStatus           SlaStatus     @default(MET)
+  slaLastNotifiedAt   DateTime?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
   employee      Employee      @relation("EmployeeRequests", fields: [employeeId], references: [id])
   generatedDocument GeneratedDocument?
   history       RequestHistory[]
+  slaEvents     SlaEvent[]
+  payslip       Payslip?
+
+  @@index([employeeId, status])
+  @@index([status, slaDeadline])
+  @@index([managerId])
 }
 
 model GeneratedDocument {
@@ -168,6 +200,25 @@ model RequestHistory {
   request    Request  @relation(fields: [requestId], references: [id])
 }
 
+model GeneratedDocument {
+  id              String   @id @default(uuid())
+  requestId       String   @unique
+  employeeId      String
+  documentType    String
+  reference       String   @unique
+  fileName        String
+  filePath        String
+  generatedById   String
+  generatedByName String
+  generatedAt     DateTime @default(now())
+
+  request         Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  employee        Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([documentType])
+}
+
 model Task {
   id                 String      @id @default(uuid())
   title              String
@@ -177,10 +228,13 @@ model Task {
   assigneeId         String
   projectId          String?
   dueDate            DateTime?
+  deliverableLink    String?
+  deliverableNote    String?
   submittedForReview Boolean     @default(false)
   reviewComment      String?
   reviewedById       String?
   reviewedAt         DateTime?
+  taskScore          Int?        // 1-10, set by CHEF on approval
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -188,6 +242,9 @@ model Task {
   project            Project?           @relation(fields: [projectId], references: [id])
   reviewedBy         Employee?          @relation("TaskReview", fields: [reviewedById], references: [id])
   requiredSkills     TaskRequiredSkill[]
+
+  @@index([assigneeId, status, reviewedAt])
+  @@index([reviewedAt, taskScore])
 }
 
 model Project {
@@ -337,6 +394,9 @@ model Evaluation {
   evaluator     Employee         @relation("EvaluatorEvaluations", fields: [evaluatorId], references: [id])
   validatedBy   Employee?        @relation("ValidatedEvaluations", fields: [validatedById], references: [id])
   objectives    EvaluationObjective[]
+  bonus         Bonus?
+
+  @@index([employeeId, period])
 }
 
 model EvaluationObjective {
@@ -358,6 +418,74 @@ model SlaConfig {
   maxHours     Int
   description  String?
   createdAt    DateTime    @default(now())
+}
+
+model SlaEvent {
+  id         String   @id @default(uuid())
+  requestId  String
+  eventType  String   // WARNING, BREACH, ESCALATION
+  recipient  String   // CHEF or RH
+  timestamp  DateTime @default(now())
+
+  request    Request  @relation(fields: [requestId], references: [id])
+}
+
+model SalaryGrade {
+  id          String   @id @default(uuid())
+  role        Role
+  level       Int
+  baseSalary  Float
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employees Employee[]
+
+  @@unique([role, level])
+}
+
+model BonusRule {
+  id         String   @id @default(uuid())
+  minScore   Float
+  maxScore   Float
+  percentage Float
+  createdAt  DateTime @default(now())
+}
+
+model Bonus {
+  id            String     @id @default(uuid())
+  employeeId    String
+  amount        Float
+  type          BonusType
+  reason        String?
+  period        String?
+  paidAt        DateTime?
+  evaluationId  String?    @unique
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+  evaluation Evaluation? @relation(fields: [evaluationId], references: [id])
+
+  @@index([employeeId, period, type])
+  @@index([evaluationId])
+}
+
+model Payslip {
+  id             String            @id @default(uuid())
+  employeeId     String
+  requestId      String?           @unique
+  period         String
+  periodType     PayslipPeriodType
+  baseSalary     Float
+  salaryOverride Float?
+  resolvedSalary Float
+  bonusTotal     Float
+  bonusDetails   Json?
+  generatedAt    DateTime          @default(now())
+
+  employee       Employee          @relation(fields: [employeeId], references: [id])
+  request        Request?          @relation(fields: [requestId], references: [id])
 }
 
 model Notification {

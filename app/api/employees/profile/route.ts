@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma"
 import { getCurrentUser } from "@/lib/getCurrentUser"
 import { NextResponse } from "next/server"
+import { z } from "zod"
 
 export async function GET(req: Request) {
   const user = await getCurrentUser()
@@ -40,22 +41,25 @@ export async function PATCH(req: Request) {
 
   try {
     const body = await req.json()
-    const { avatar, name, phone } = body
+    
+    // Strict validation to prevent XSS (especially via avatar javascript: URLs)
+    const updateSchema = z.object({
+      avatar: z.string().url("Avatar must be a valid URL").startsWith("https://", "Avatar must use HTTPS").optional().nullable(),
+      name: z.string().min(2, "Name too short").max(50, "Name too long").optional(),
+      phone: z.string().regex(/^[0-9+\s]+$/, "Invalid phone format").optional(),
+    });
 
-    console.log("🔧 Profile update - user:", user.id, "avatar:", avatar ? "yes" : "no")
+    const parsed = updateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.errors[0].message }, { status: 400 })
+    }
 
+    const { avatar, name, phone } = parsed.data;
     const updateData: any = {}
 
-    if (avatar !== undefined) {
-      // Handle null to remove, or string to set
-      updateData.avatar = avatar === null ? null : avatar
-    }
-    if (name !== undefined) {
-      updateData.name = name
-    }
-    if (phone !== undefined) {
-      updateData.phone = phone
-    }
+    if (avatar !== undefined) updateData.avatar = avatar
+    if (name !== undefined) updateData.name = name
+    if (phone !== undefined) updateData.phone = phone
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: "No data to update" }, { status: 400 })
@@ -74,7 +78,6 @@ export async function PATCH(req: Request) {
       }
     })
 
-    console.log("✅ Profile updated:", updated.id, "avatar:", updated.avatar ? "yes" : "no")
 
     return NextResponse.json(updated)
   } catch (error) {

@@ -33,7 +33,7 @@ export async function PATCH(
     }
 
     const isParticipant = conversation.participants.some(
-      (p) => p.id === user.id
+      (p: { id: string }) => p.id === user.id
     )
 
     if (!isParticipant) {
@@ -59,7 +59,7 @@ export async function PATCH(
 
     if (unreadMessages.length > 0) {
       await prisma.messageRead.createMany({
-        data: unreadMessages.map(m => ({
+        data: unreadMessages.map((m: { id: string }) => ({
           messageId: m.id,
           employeeId: user.id
         })),

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAuth } from '@/lib'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -66,14 +66,14 @@ export default function LoginPage() {
     }
   }
 
-  const handleSendCode = async (): Promise<void> => {
+  const handleSendCode = useCallback(async (): Promise<void> => {
     if (!user) return
     await fetch('/api/auth/send-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: user.id }),
     })
-  }
+  }, [user])
 
   const handleVerified = () => {
     setOtpVerified(true)

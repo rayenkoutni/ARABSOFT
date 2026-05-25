@@ -1,5 +1,102 @@
 import nodemailer from 'nodemailer';
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatDateTime(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString('fr-FR', {
+    year: 'numeric',
+    month: 'long',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function buildSlaEmailHtml({
+  type,
+  requestId,
+  requestType,
+  deadline,
+  owner,
+  sentAt,
+}: {
+  type: 'WARNING' | 'BREACH' | 'ESCALATION';
+  requestId: string;
+  requestType: string;
+  deadline: Date | string;
+  owner: string;
+  sentAt: Date | string;
+}) {
+  const normalizedType = type === 'WARNING' ? 'WARNING' : type === 'ESCALATION' ? 'ESCALATION' : 'BREACH';
+  const title =
+    normalizedType === 'WARNING'
+      ? 'Avertissement SLA'
+      : normalizedType === 'ESCALATION'
+        ? 'SLA Depasse - Escalade'
+        : 'SLA Depasse - Action Requise';
+  const intro =
+    normalizedType === 'WARNING'
+      ? "Cette demande approche de son echeance SLA et necessite une prise en charge rapide."
+      : normalizedType === 'ESCALATION'
+        ? "Cette demande reste en depassement SLA et vous est escaladee pour traitement prioritaire."
+        : "Cette demande a depasse son delai SLA et doit etre traitee immediatement.";
+  const cta =
+    normalizedType === 'WARNING'
+      ? 'Veuillez traiter cette demande rapidement afin de respecter le delai imparti.'
+      : 'Veuillez traiter cette demande immediatement.';
+  const timingLabel =
+    normalizedType === 'WARNING' ? "Echeance SLA" : "Echeance SLA depassee";
+  const timestampLabel =
+    normalizedType === 'WARNING' ? "Horodatage de l'avertissement" : 'Horodatage de notification';
+
+  return `<div style="font-family: system-ui, sans-serif, Arial; font-size: 14px; color: #212121">
+  <div style="max-width: 600px; margin: auto">
+    <div style="text-align: center; background-color: #1B3A6B; padding: 32px 16px; border-radius: 32px 32px 0 0;">
+      <span style="font-size: 22px; font-weight: 700; color: #ffffff; letter-spacing: 0.04em;">
+        ARAB<span style="color: #F5A623;">SOFT</span>
+        <span style="font-size: 13px; color: rgba(255,255,255,0.5); border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px; margin-left: 4px; letter-spacing: 0.08em; font-weight: 400;">HR</span>
+      </span>
+    </div>
+    <div style="background-color: #F5A623; height: 4px;"></div>
+    <div style="padding: 32px 24px; background-color: #ffffff;">
+      <h1 style="font-size: 24px; color: #1B3A6B; margin-bottom: 8px;">${escapeHtml(title)}</h1>
+      <p style="color: #64748B; margin-top: 0; margin-bottom: 24px; font-size: 14px;">${escapeHtml(intro)}</p>
+      <div style="background-color: #F4F6FA; border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; border-left: 4px solid #F5A623;">
+        <p style="margin: 0 0 12px; font-weight: 600; color: #1B3A6B; font-size: 15px;">Details de la demande</p>
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr><td style="padding: 6px 0; color: #64748B; width: 42%;">Reference de demande</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">#${escapeHtml(requestId.slice(0, 8).toUpperCase())}</td></tr>
+          <tr><td style="padding: 6px 0; color: #64748B;">Type de demande</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(requestType)}</td></tr>
+          <tr><td style="padding: 6px 0; color: #64748B;">${escapeHtml(timingLabel)}</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(formatDateTime(deadline))}</td></tr>
+          <tr><td style="padding: 6px 0; color: #64748B;">Responsable actuel</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(owner)}</td></tr>
+          <tr><td style="padding: 6px 0; color: #64748B;">${escapeHtml(timestampLabel)}</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(formatDateTime(sentAt))}</td></tr>
+        </table>
+      </div>
+      <div style="background-color: #FFF7E8; border: 1px solid #F5D18A; border-radius: 12px; padding: 16px 18px; margin-bottom: 24px;">
+        <p style="margin: 0; color: #7C4A03; font-size: 14px; line-height: 1.6; font-weight: 600;">${escapeHtml(cta)}</p>
+      </div>
+    </div>
+    <div style="background-color: #F5A623; height: 4px;"></div>
+    <div style="text-align: center; background-color: #1B3A6B; padding: 24px 16px; border-radius: 0 0 32px 32px;">
+      <p style="color: rgba(255,255,255,0.7); font-size: 13px; margin: 0 0 8px;">Pour toute question, contactez le service RH.</p>
+      <p style="margin: 0; font-size: 11px; color: rgba(255,255,255,0.4);">(c) 2026 ArabSoft. Tous droits reserves.</p>
+    </div>
+  </div>
+</div>`;
+}
+
 /**
  * Sends an email using Nodemailer with Gmail SMTP.
  * Falls back to console logging when SMTP_USER is not configured.

@@ -75,7 +75,7 @@ export async function checkProjectAccess(userId: string, userRole: string, proje
 
   // Employee: only projects they're assigned to
   if (userRole === ROLE.EMPLOYEE) {
-    const isAssigned = project.team.some((member) => member.id === userId);
+    const isAssigned = project.team.some((member: { id: string }) => member.id === userId);
     return { access: isAssigned, project, error: isAssigned ? null : "Access denied" };
   }
 
@@ -85,12 +85,12 @@ export async function checkProjectAccess(userId: string, userRole: string, proje
       where: { managerId: userId },
       select: { id: true },
     });
-    const teamIds = teamMembers.map((e) => e.id);
+    const teamIds = teamMembers.map((e: { id: string }) => e.id);
 
     const isAuthorized =
       project.createdById === userId ||
       project.managerId === userId ||
-      project.team.some((member) => teamIds.includes(member.id));
+      project.team.some((member: { id: string }) => teamIds.includes(member.id));
 
     return { access: isAuthorized, project, error: isAuthorized ? null : "Access denied" };
   }
@@ -106,7 +106,7 @@ export async function getManagerTeamIds(managerId: string) {
     where: { managerId },
     select: { id: true },
   });
-  return teamMembers.map((e) => e.id);
+  return teamMembers.map((e: { id: string }) => e.id);
 }
 
 /**

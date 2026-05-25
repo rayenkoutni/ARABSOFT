@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/getCurrentUser"
 import { logAudit } from "@/lib/audit"
 import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
+import crypto from "crypto"
 import { Prisma, Role } from "@prisma/client"
 import { sendEmail } from "@/lib/mailer"
 import { getTodayDateOnly, isDateOnlyWithinRange, toDateOnlyValue } from "@/lib/leave-request"
@@ -167,14 +168,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Payload employe invalide" }, { status: 400 })
   }
 
-  const { name, email, phone, role, department, position, managerId, hireDate, subordinateIds, technicalSkills } = input
+  const { name, email, phone, role, department, position, managerId, hireDate, subordinateIds, technicalSkills, salaryGradeId, salaryOverride } = input
+
+  let finalRole = role
+  if (salaryGradeId) {
+    const grade = await prisma.salaryGrade.findUnique({ where: { id: salaryGradeId } })
+    if (grade) finalRole = grade.role
+  }
 
   const existing = await prisma.employee.findUnique({ where: { email } })
   if (existing) {
     return NextResponse.json({ error: "Un compte avec cet email existe deja" }, { status: 409 })
   }
 
-  const tempPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4).toUpperCase()
+  const tempPassword = crypto.randomBytes(6).toString("hex").toUpperCase()
   const hashedPassword = await bcrypt.hash(tempPassword, 10)
 
   try {
@@ -185,16 +192,19 @@ export async function POST(req: Request) {
           email,
           phone: phone || null,
           password: hashedPassword,
-          role,
+          role: finalRole,
           department: department || null,
           position: position || null,
           managerId: managerId || null,
           hireDate,
           leaveBalance: 0,
+          salaryGradeId: salaryGradeId || null,
+          salaryOverride: salaryOverride ?? null,
         },
         select: {
           id: true, name: true, email: true, phone: true, role: true,
-          department: true, position: true, managerId: true, hireDate: true, leaveBalance: true
+          department: true, position: true, managerId: true, hireDate: true, leaveBalance: true,
+          salaryGradeId: true, salaryOverride: true
         }
       })
 

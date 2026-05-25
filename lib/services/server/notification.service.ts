@@ -32,7 +32,7 @@ class NotificationServerService {
 
     if (rhUsers.length > 0) {
       await Promise.all(
-        rhUsers.map((rh) => this.createNotification(rh.id, title, message))
+        rhUsers.map((rh: { id: string }) => this.createNotification(rh.id, title, message))
       );
     }
   }

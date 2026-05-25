@@ -10,12 +10,27 @@ import {
   validateTaskRequiredSkills,
 } from "@/lib/tasks"
 
-export async function GET() {
+export async function GET(req: Request) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: "Non autorise" }, { status: 401 })
 
+  const { searchParams } = new URL(req.url)
+  const assigneeId = searchParams.get("assigneeId")
+  const excludeStatus = searchParams.get("excludeStatus")
+
+  let where: any = {}
+
+  if (assigneeId) {
+    where.assigneeId = assigneeId
+  }
+
+  if (excludeStatus) {
+    where.status = { not: excludeStatus }
+  }
+
   if (user.role === "RH") {
     return NextResponse.json(await prisma.task.findMany({
+      where,
       include: taskWithRelationsInclude,
     }))
   }
@@ -24,14 +39,31 @@ export async function GET() {
     const teamIds = await prisma.employee.findMany({
       where: { managerId: user.id }, select: { id: true }
     })
+    const teamIdList = teamIds.map((e: { id: string }) => e.id)
+
+    if (assigneeId && !teamIdList.includes(assigneeId)) {
+      return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+    }
+
+    if (!assigneeId) {
+      where.assigneeId = { in: teamIdList }
+    }
+
     return NextResponse.json(await prisma.task.findMany({
-      where: { assigneeId: { in: teamIds.map((e: { id: string }) => e.id) } },
+      where,
       include: taskWithRelationsInclude,
     }))
   }
 
+  // COLLABORATEUR
+  if (assigneeId && assigneeId !== user.id) {
+    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+  }
+
+  where.assigneeId = user.id
+
   return NextResponse.json(await prisma.task.findMany({
-    where: { assigneeId: user.id },
+    where,
     include: taskWithRelationsInclude,
   }))
 }

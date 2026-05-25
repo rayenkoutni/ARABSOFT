@@ -37,6 +37,14 @@ interface EmployeeOption {
   department: string | null
 }
 
+interface SalaryGrade {
+  id: string
+  role: string
+  level: number
+  baseSalary: number
+  description?: string | null
+}
+
 function getTodayDateInputMax() {
   const now = new Date()
   const year = String(now.getFullYear())
@@ -60,6 +68,8 @@ export interface EmployeeCreateFormData {
   hireDate: string
   subordinateIds: string[]
   technicalSkills: TechnicalSkillFormRow[]
+  salaryGradeId?: string | null
+  salaryOverride?: number | null
 }
 
 interface EmployeeCreateDialogProps {
@@ -71,6 +81,7 @@ interface EmployeeCreateDialogProps {
   chefs: EmployeeOption[]
   collaborators: EmployeeOption[]
   technicalSkillsCatalog: TechnicalSkillCatalogItem[]
+  salaryGrades: SalaryGrade[]
   onOpenChange: (open: boolean) => void
   onSubmit: (e: React.FormEvent) => void
   onFormDataChange: (value: EmployeeCreateFormData) => void
@@ -90,6 +101,8 @@ export function getDefaultEmployeeCreateFormData(): EmployeeCreateFormData {
     hireDate: '',
     subordinateIds: [],
     technicalSkills: createInitialTechnicalSkillRows(),
+    salaryGradeId: null,
+    salaryOverride: null,
   }
 }
 
@@ -102,6 +115,7 @@ export function EmployeeCreateDialog({
   chefs,
   collaborators,
   technicalSkillsCatalog,
+  salaryGrades,
   onOpenChange,
   onSubmit,
   onFormDataChange,
@@ -234,16 +248,65 @@ export function EmployeeCreateDialog({
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Poste</Label>
-              <Input
-                placeholder="ex : Développeur Full-Stack"
-                value={formData.position}
-                onChange={(e) => updateFormData({ position: e.target.value })}
-              />
-            </div>
+             <div className="space-y-2">
+               <Label>Poste</Label>
+               <Input
+                 placeholder="ex : Développeur Full-Stack"
+                 value={formData.position}
+                 onChange={(e) => updateFormData({ position: e.target.value })}
+               />
+             </div>
 
-            {(formData.role === 'COLLABORATEUR' || formData.role === '') && (
+             {/* === Salary Grade Section (RH) === */}
+             <div className="space-y-4 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)' }}>
+               <div>
+                 <Label className="text-sm font-medium">Grade Salarial</Label>
+                 <Select
+                   value={formData.salaryGradeId || ''}
+                   onValueChange={(val) => {
+                     const grade = salaryGrades.find((g) => g.id === val)
+                     updateFormData({
+                       salaryGradeId: val || null,
+                       role: grade ? grade.role : formData.role,
+                     })
+                   }}
+                 >
+                   <SelectTrigger>
+                     <SelectValue placeholder="Sélectionner un grade salarial" />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {salaryGrades.length === 0 ? (
+                       <SelectItem value="" disabled>Aucun grade disponible</SelectItem>
+                     ) : (
+                       salaryGrades.map((grade) => (
+                         <SelectItem key={grade.id} value={grade.id}>
+                           {grade.role} — Niveau {grade.level} ({grade.baseSalary} €)
+                           {grade.description ? ` — ${grade.description}` : ''}
+                         </SelectItem>
+                       ))
+                     )}
+                   </SelectContent>
+                 </Select>
+               </div>
+
+               <div className="space-y-2">
+                 <Label>Salaire individuel (override, optionnel)</Label>
+                 <Input
+                   type="number"
+                   step="0.01"
+                   placeholder="Laisser vide pour utiliser le base du grade"
+                   value={formData.salaryOverride ?? ''}
+                   onChange={(e) => updateFormData({ 
+                     salaryOverride: e.target.value ? parseFloat(e.target.value) : null 
+                   })}
+                 />
+                 <p className="text-xs text-muted-foreground">
+                   Si renseigné, ce montant remplace le salaire de base du grade pour cet employé.
+                 </p>
+               </div>
+             </div>
+
+             {(formData.role === 'COLLABORATEUR' || formData.role === '') && (
               <div className="space-y-2">
                 <Label>Chef (manager)</Label>
                 <Select value={formData.managerId} onValueChange={(value) => updateFormData({ managerId: value })}>

@@ -152,7 +152,7 @@ export default function AuditPage() {
               <TableHead className="w-40">Acteur</TableHead>
               <TableHead className="w-32">Action</TableHead>
               <TableHead className="w-32">Entite</TableHead>
-              <TableHead>Details</TableHead>
+               <TableHead className="hidden lg:table-cell">Details</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -175,7 +175,7 @@ export default function AuditPage() {
                   <TableCell>{log.actorName}</TableCell>
                   <TableCell>{log.action}</TableCell>
                   <TableCell>{log.entity}</TableCell>
-                  <TableCell className="max-w-xs truncate" title={formatDetails(log.details)}>
+                  <TableCell className="max-w-xs truncate hidden lg:table-cell" title={formatDetails(log.details)}>
                     {formatDetails(log.details)}
                   </TableCell>
                 </TableRow>

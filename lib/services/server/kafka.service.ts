@@ -1,5 +1,5 @@
 import { Kafka, Producer, Consumer } from 'kafkajs';
-import { KAFKA } from '@/lib';
+import { KAFKA } from '@/lib/constants';
 
 class KafkaService {
   private kafka: Kafka;

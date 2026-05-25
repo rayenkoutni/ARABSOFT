@@ -2,7 +2,7 @@ import { prisma } from '@/lib/services/prisma.service';
 import { kafkaService } from '@/lib/services/server/kafka.service';
 import { socketService } from '@/lib/services/server/socket.service';
 import { notificationServerService } from '@/lib/services/server/notification.service';
-import { KAFKA } from '@/lib';
+import { KAFKA } from '@/lib/constants';
 
 class ChatService {
   async init() {

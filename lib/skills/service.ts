@@ -535,12 +535,12 @@ export async function applyManagerSkillChanges(
     changes: EmployeeSkillChangeBatchInput["changes"]
   }
 ) {
-  if (args.actor.role !== Role.CHEF) {
+  if (args.actor.role !== Role.CHEF && args.actor.role !== Role.RH) {
     throw new SkillDomainError(SKILL_ERRORS.managerOnly, 403)
   }
 
   const employee = await getCollaboratorOrThrow(db, args.employeeId)
-  if (employee.managerId !== args.actor.id) {
+  if (args.actor.role === Role.CHEF && employee.managerId !== args.actor.id) {
     throw new SkillDomainError(SKILL_ERRORS.managerOnly, 403)
   }
 
