@@ -81,18 +81,18 @@ export default function SettingsPage() {
     
     setIsSavingAvatar(true)
     try {
-      console.log("📤 Sending avatar to server, length:", pendingAvatar.length)
+      console.info("📤 Sending avatar to server, length:", pendingAvatar.length)
       const res = await fetch('/api/employees/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ avatar: pendingAvatar })
       })
       
-      console.log("📥 Response status:", res.status)
+      console.info("📥 Response status:", res.status)
       
       if (res.ok) {
         const updatedUser = await res.json()
-        console.log("📥 Response data:", updatedUser)
+        console.info("📥 Response data:", updatedUser)
         
         // Update local storage and trigger refresh
         const currentUserData = JSON.parse(localStorage.getItem('hr_user') || '{}')
@@ -704,3 +704,4 @@ function SlaSettingsTab() {
     </Card>
   )
 }
+

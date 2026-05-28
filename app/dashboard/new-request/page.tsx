@@ -18,6 +18,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/lib'
 import { documentTypeOptions } from '@/lib/document-type'
+import { formatFrenchMonthYear, getPayslipPeriodLabel } from '@/lib/payslip'
 import {
   formatLeaveBalance,
   getLeaveDurationLabel,
@@ -33,7 +34,29 @@ import { requestService } from '@/lib/services/request.service'
 import type { RequestCreatePayload } from '@/lib/services/request.service'
 
 interface EmployeeProfileSummary {
+  id: string
+  hireDate?: string | null
   leaveBalance?: number
+}
+
+interface EmployeePayslipSummary {
+  id: string
+  period: string
+  periodType: 'MONTHLY' | 'ANNUAL'
+}
+
+type PayslipPeriodType = 'MONTHLY' | 'ANNUAL'
+
+function startOfMonthUtc(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 0, 0, 0, 0))
+}
+
+function addMonthUtc(date: Date, months: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1, 0, 0, 0, 0))
+}
+
+function toMonthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
 export default function NewRequestPage() {
@@ -50,12 +73,18 @@ export default function NewRequestPage() {
     startDate: '',
     endDate: '',
   })
+  const [profile, setProfile] = useState<EmployeeProfileSummary | null>(null)
   const [leaveBalance, setLeaveBalance] = useState(0)
   const [existingRequests, setExistingRequests] = useState<Request[]>([])
+  const [existingPayslips, setExistingPayslips] = useState<EmployeePayslipSummary[]>([])
+  const [payslipPeriodType, setPayslipPeriodType] = useState<PayslipPeriodType>('MONTHLY')
+  const [selectedMonthlyPeriod, setSelectedMonthlyPeriod] = useState('')
+  const [selectedAnnualPeriod, setSelectedAnnualPeriod] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [isLoadingDraft, setIsLoadingDraft] = useState(!!draftId)
   const [isLoadingProfile, setIsLoadingProfile] = useState(true)
+  const [isLoadingPayslips, setIsLoadingPayslips] = useState(false)
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -68,8 +97,9 @@ export default function NewRequestPage() {
           throw new Error('Echec du chargement du profil')
         }
 
-        const profile = (await response.json()) as EmployeeProfileSummary
-        setLeaveBalance(typeof profile.leaveBalance === 'number' ? profile.leaveBalance : 0)
+        const data = (await response.json()) as EmployeeProfileSummary
+        setProfile(data)
+        setLeaveBalance(typeof data.leaveBalance === 'number' ? data.leaveBalance : 0)
       } catch (err) {
         console.error('Failed to load profile:', err)
       } finally {
@@ -78,6 +108,30 @@ export default function NewRequestPage() {
     }
 
     loadProfile()
+  }, [user])
+
+  useEffect(() => {
+    const loadPayslips = async () => {
+      if (!user) return
+
+      try {
+        setIsLoadingPayslips(true)
+        const response = await fetch(`/api/employees/${user.id}/payslips`, { cache: 'no-store' })
+        if (!response.ok) {
+          throw new Error('Echec du chargement des fiches de paie')
+        }
+
+        const data = (await response.json()) as EmployeePayslipSummary[]
+        setExistingPayslips(Array.isArray(data) ? data : [])
+      } catch (err) {
+        console.error('Failed to load payslips:', err)
+        setExistingPayslips([])
+      } finally {
+        setIsLoadingPayslips(false)
+      }
+    }
+
+    loadPayslips()
   }, [user])
 
   useEffect(() => {
@@ -98,6 +152,18 @@ export default function NewRequestPage() {
             startDate: toDateOnlyValue(draftRequest.startDate),
             endDate: toDateOnlyValue(draftRequest.endDate),
           })
+
+          if (draftRequest.documentType === 'FICHE_PAIE' && draftRequest.reason) {
+            const [draftPeriodType, draftPeriod] = draftRequest.reason.split(':')
+            if (draftPeriodType === 'MONTHLY' || draftPeriodType === 'ANNUAL') {
+              setPayslipPeriodType(draftPeriodType)
+              if (draftPeriodType === 'MONTHLY') {
+                setSelectedMonthlyPeriod(draftPeriod)
+              } else {
+                setSelectedAnnualPeriod(draftPeriod)
+              }
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to load draft:', err)
@@ -127,6 +193,8 @@ export default function NewRequestPage() {
 
   const isLeaveRequest = isLeaveRequestType(formData.type)
   const isDocumentRequest = formData.type === 'DOCUMENT'
+  const isPayslipDocument = isDocumentRequest && formData.documentType === 'FICHE_PAIE'
+  const hireDate = profile?.hireDate ? new Date(profile.hireDate) : null
   const leaveImpact = useMemo(
     () =>
       getLeaveImpactSummary({
@@ -170,6 +238,73 @@ export default function NewRequestPage() {
     ? 'Une demande de conge existe deja sur cette periode.'
     : ''
 
+  const monthlyOptions = useMemo(() => {
+    if (!hireDate) return []
+
+    const today = new Date()
+    const firstAvailable = startOfMonthUtc(hireDate)
+    const lastCompleteMonth = startOfMonthUtc(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)))
+    if (firstAvailable.getTime() > lastCompleteMonth.getTime()) {
+      return []
+    }
+
+    const existingMonthlyPeriods = new Set(
+      existingPayslips
+        .filter((item) => item.periodType === 'MONTHLY')
+        .map((item) => item.period),
+    )
+
+    const options: Array<{ value: string; label: string; disabled: boolean }> = []
+    for (let cursor = firstAvailable; cursor.getTime() <= lastCompleteMonth.getTime(); cursor = addMonthUtc(cursor, 1)) {
+      const value = toMonthKey(cursor)
+      options.push({
+        value,
+        label: formatFrenchMonthYear(cursor),
+        disabled: existingMonthlyPeriods.has(value),
+      })
+    }
+
+    return options.reverse()
+  }, [existingPayslips, hireDate])
+
+  const annualOptions = useMemo(() => {
+    if (!hireDate) return []
+
+    const today = new Date()
+    const lastCompleteYear = today.getUTCFullYear() - 1
+    if (hireDate.getUTCFullYear() > lastCompleteYear) {
+      return []
+    }
+
+    const existingAnnualPeriods = new Set(
+      existingPayslips
+        .filter((item) => item.periodType === 'ANNUAL')
+        .map((item) => item.period),
+    )
+
+    const options: Array<{ value: string; label: string; disabled: boolean }> = []
+    for (let year = hireDate.getUTCFullYear(); year <= lastCompleteYear; year += 1) {
+      const value = String(year)
+      options.push({
+        value,
+        label: getPayslipPeriodLabel('ANNUAL', value),
+        disabled: existingAnnualPeriods.has(value),
+      })
+    }
+
+    return options.reverse()
+  }, [existingPayslips, hireDate])
+
+  const selectedPayslipReason = isPayslipDocument
+    ? payslipPeriodType === 'MONTHLY'
+      ? selectedMonthlyPeriod
+        ? `MONTHLY:${selectedMonthlyPeriod}`
+        : ''
+      : selectedAnnualPeriod
+        ? `ANNUAL:${selectedAnnualPeriod}`
+        : ''
+    : ''
+
   if (!user || user.role !== 'COLLABORATEUR') {
     return (
       <div className="py-12 text-center">
@@ -200,6 +335,12 @@ export default function NewRequestPage() {
       ...current,
       documentType: value,
     }))
+
+    if (value !== 'FICHE_PAIE') {
+      setSelectedMonthlyPeriod('')
+      setSelectedAnnualPeriod('')
+      setPayslipPeriodType('MONTHLY')
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent, asDraft: boolean = false) => {
@@ -213,6 +354,11 @@ export default function NewRequestPage() {
 
     if (isDocumentRequest && !formData.documentType) {
       setError('Le type de document est obligatoire')
+      return
+    }
+
+    if (isPayslipDocument && !selectedPayslipReason) {
+      setError('La periode de la fiche de paie est obligatoire')
       return
     }
 
@@ -232,6 +378,7 @@ export default function NewRequestPage() {
         startDate: isLeaveRequest ? formData.startDate : '',
         endDate: isLeaveRequest ? formData.endDate : '',
         documentType: isDocumentRequest ? formData.documentType as RequestDocumentType : null,
+        reason: isPayslipDocument ? selectedPayslipReason : null,
       }
 
       if (draftId) {
@@ -245,6 +392,7 @@ export default function NewRequestPage() {
             startDate: payload.startDate || null,
             endDate: payload.endDate || null,
             documentType: payload.documentType ?? null,
+            reason: payload.reason ?? null,
           }),
         })
 
@@ -321,6 +469,65 @@ export default function NewRequestPage() {
                   </SelectContent>
                 </Select>
               </FieldGroup>
+            )}
+
+            {isPayslipDocument && (
+              <div className="space-y-4 rounded-xl border p-4">
+                <FieldGroup>
+                  <FieldLabel htmlFor="payslipPeriodType">Type de periode</FieldLabel>
+                  <Select value={payslipPeriodType} onValueChange={(value: PayslipPeriodType) => setPayslipPeriodType(value)}>
+                    <SelectTrigger id="payslipPeriodType">
+                      <SelectValue placeholder="Selectionner le type de periode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MONTHLY">Mensuelle</SelectItem>
+                      <SelectItem value="ANNUAL">Annuelle</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FieldGroup>
+
+                {payslipPeriodType === 'MONTHLY' ? (
+                  <FieldGroup>
+                    <FieldLabel htmlFor="monthlyPeriod">Mois concerne</FieldLabel>
+                    <Select value={selectedMonthlyPeriod} onValueChange={setSelectedMonthlyPeriod}>
+                      <SelectTrigger id="monthlyPeriod">
+                        <SelectValue placeholder={isLoadingPayslips || isLoadingProfile ? 'Chargement des periodes...' : 'Selectionner un mois'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {monthlyOptions.length > 0 ? monthlyOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                            {option.label}{option.disabled ? ' - deja generee' : ''}
+                          </SelectItem>
+                        )) : (
+                          <div className="px-2 py-2 text-sm text-muted-foreground">
+                            Aucune periode mensuelle disponible.
+                          </div>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </FieldGroup>
+                ) : (
+                  <FieldGroup>
+                    <FieldLabel htmlFor="annualPeriod">Annee concernee</FieldLabel>
+                    <Select value={selectedAnnualPeriod} onValueChange={setSelectedAnnualPeriod}>
+                      <SelectTrigger id="annualPeriod">
+                        <SelectValue placeholder={isLoadingPayslips || isLoadingProfile ? 'Chargement des periodes...' : 'Selectionner une annee'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {annualOptions.length > 0 ? annualOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                            {option.label}{option.disabled ? ' - deja generee' : ''}
+                          </SelectItem>
+                        )) : (
+                          <div className="px-2 py-2 text-sm text-muted-foreground">
+                            Aucune periode annuelle disponible.
+                          </div>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </FieldGroup>
+                )}
+              </div>
             )}
 
             <FieldGroup>

@@ -129,6 +129,9 @@ export function EmployeeCreateDialog({
     hasTechnicalSkillOptions && formData.technicalSkills.length < maxTechnicalSkillRows
   const hireDateMax = getTodayDateInputMax()
   const hasFutureHireDate = isFutureDateInputValue(formData.hireDate)
+  const filteredSalaryGrades = formData.role
+    ? salaryGrades.filter((grade) => grade.role === formData.role)
+    : salaryGrades
 
   const updateFormData = (updates: Partial<EmployeeCreateFormData>) => {
     onFormDataChange({ ...formData, ...updates })
@@ -138,18 +141,20 @@ export function EmployeeCreateDialog({
     onFormDataChange({
       ...formData,
       technicalSkills: formData.technicalSkills.map((row, rowIndex) =>
-        rowIndex === index ? { ...row, ...updates } : row
+        rowIndex === index ? { ...row, ...updates } : row,
       ),
     })
   }
 
   const changeRole = (role: string) => {
+    const currentGrade = salaryGrades.find((grade) => grade.id === formData.salaryGradeId)
     onFormDataChange({
       ...formData,
       role,
       managerId: role === 'COLLABORATEUR' ? formData.managerId : '',
       subordinateIds: role === 'CHEF' ? formData.subordinateIds : [],
       technicalSkills: role === 'COLLABORATEUR' ? formData.technicalSkills : createInitialTechnicalSkillRows(),
+      salaryGradeId: currentGrade && currentGrade.role !== role ? null : formData.salaryGradeId,
     })
   }
 
@@ -163,7 +168,7 @@ export function EmployeeCreateDialog({
         <DialogHeader className="shrink-0 border-b px-6 py-5 pr-12">
           <DialogTitle>Ajouter un collaborateur</DialogTitle>
           <DialogDescription>
-            Remplissez les informations pour créer un nouveau compte. Un mot de passe temporaire sera généré automatiquement.
+            Remplissez les informations pour creer un nouveau compte. Un mot de passe temporaire sera genere automatiquement.
           </DialogDescription>
         </DialogHeader>
 
@@ -200,7 +205,7 @@ export function EmployeeCreateDialog({
             </div>
 
             <div className="space-y-2">
-              <Label>Numéro de téléphone</Label>
+              <Label>Numero de telephone</Label>
               <Input
                 placeholder="ex : +216 XX XXX XXX"
                 value={formData.phone}
@@ -210,10 +215,10 @@ export function EmployeeCreateDialog({
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="space-y-2">
-                <Label>Rôle *</Label>
+                <Label>Role *</Label>
                 <Select value={formData.role} onValueChange={changeRole}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Sélectionner" />
+                    <SelectValue placeholder="Selectionner" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="COLLABORATEUR">Collaborateur</SelectItem>
@@ -224,13 +229,14 @@ export function EmployeeCreateDialog({
               </div>
 
               <div className="space-y-2">
-                <Label>Département</Label>
+                <Label>Departement</Label>
                 <Input
                   placeholder="ex : Engineering"
                   value={formData.department}
                   onChange={(e) => updateFormData({ department: e.target.value })}
                 />
               </div>
+
               <div className="space-y-2">
                 <Label>Date d&apos;embauche *</Label>
                 <Input
@@ -242,76 +248,73 @@ export function EmployeeCreateDialog({
                 />
                 {hasFutureHireDate && (
                   <p className="text-sm" style={{ color: '#991B1B' }}>
-                    La date d&apos;embauche ne peut pas être dans le futur.
+                    La date d&apos;embauche ne peut pas etre dans le futur.
                   </p>
                 )}
               </div>
             </div>
 
-             <div className="space-y-2">
-               <Label>Poste</Label>
-               <Input
-                 placeholder="ex : Développeur Full-Stack"
-                 value={formData.position}
-                 onChange={(e) => updateFormData({ position: e.target.value })}
-               />
-             </div>
+            <div className="space-y-2">
+              <Label>Poste</Label>
+              <Input
+                placeholder="ex : Developpeur Full-Stack"
+                value={formData.position}
+                onChange={(e) => updateFormData({ position: e.target.value })}
+              />
+            </div>
 
-             {/* === Salary Grade Section (RH) === */}
-             <div className="space-y-4 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)' }}>
-               <div>
-                 <Label className="text-sm font-medium">Grade Salarial</Label>
-                 <Select
-                   value={formData.salaryGradeId || ''}
-                   onValueChange={(val) => {
-                     const grade = salaryGrades.find((g) => g.id === val)
-                     updateFormData({
-                       salaryGradeId: val || null,
-                       role: grade ? grade.role : formData.role,
-                     })
-                   }}
-                 >
-                   <SelectTrigger>
-                     <SelectValue placeholder="Sélectionner un grade salarial" />
-                   </SelectTrigger>
-                   <SelectContent>
-                     {salaryGrades.length === 0 ? (
-                       <SelectItem value="" disabled>Aucun grade disponible</SelectItem>
-                     ) : (
-                       salaryGrades.map((grade) => (
-                         <SelectItem key={grade.id} value={grade.id}>
-                           {grade.role} — Niveau {grade.level} ({grade.baseSalary} €)
-                           {grade.description ? ` — ${grade.description}` : ''}
-                         </SelectItem>
-                       ))
-                     )}
-                   </SelectContent>
-                 </Select>
-               </div>
+            <div className="space-y-4 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)' }}>
+              <div>
+                <Label className="text-sm font-medium">Grade salarial</Label>
+                <Select
+                  value={formData.salaryGradeId || ''}
+                  onValueChange={(val) => updateFormData({ salaryGradeId: val || null })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selectionner un grade salarial" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredSalaryGrades.length === 0 ? (
+                      <div className="px-2 py-2 text-sm text-muted-foreground">
+                        {formData.role
+                          ? 'Aucun grade disponible pour ce role'
+                          : 'Selectionnez d abord un role'}
+                      </div>
+                    ) : (
+                      filteredSalaryGrades.map((grade) => (
+                        <SelectItem key={grade.id} value={grade.id}>
+                          {grade.role} - Niveau {grade.level} ({grade.baseSalary} TND)
+                          {grade.description ? ` - ${grade.description}` : ''}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
 
-               <div className="space-y-2">
-                 <Label>Salaire individuel (override, optionnel)</Label>
-                 <Input
-                   type="number"
-                   step="0.01"
-                   placeholder="Laisser vide pour utiliser le base du grade"
-                   value={formData.salaryOverride ?? ''}
-                   onChange={(e) => updateFormData({ 
-                     salaryOverride: e.target.value ? parseFloat(e.target.value) : null 
-                   })}
-                 />
-                 <p className="text-xs text-muted-foreground">
-                   Si renseigné, ce montant remplace le salaire de base du grade pour cet employé.
-                 </p>
-               </div>
-             </div>
+              <div className="space-y-2">
+                <Label>Salaire individuel (override, optionnel)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="Laisser vide pour utiliser le salaire du grade"
+                  value={formData.salaryOverride ?? ''}
+                  onChange={(e) => updateFormData({
+                    salaryOverride: e.target.value ? parseFloat(e.target.value) : null,
+                  })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Si renseigne, ce montant remplace le salaire de base du grade pour cet employe.
+                </p>
+              </div>
+            </div>
 
-             {(formData.role === 'COLLABORATEUR' || formData.role === '') && (
+            {(formData.role === 'COLLABORATEUR' || formData.role === '') && (
               <div className="space-y-2">
                 <Label>Chef (manager)</Label>
                 <Select value={formData.managerId} onValueChange={(value) => updateFormData({ managerId: value })}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Sélectionner un chef" />
+                    <SelectValue placeholder="Selectionner un chef" />
                   </SelectTrigger>
                   <SelectContent className="max-h-64">
                     {chefs.map((chef) => (
@@ -331,9 +334,9 @@ export function EmployeeCreateDialog({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
-                    <Label className="text-base font-medium">Compétences techniques</Label>
+                    <Label className="text-base font-medium">Competences techniques</Label>
                     <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                      Sélectionnez au moins 2 compétences techniques. Toutes les compétences comportementales actives seront ajoutées automatiquement par le backend.
+                      Selectionnez au moins 2 competences techniques. Toutes les competences comportementales actives seront ajoutees automatiquement par le backend.
                     </p>
                   </div>
                   <Badge
@@ -353,7 +356,7 @@ export function EmployeeCreateDialog({
                       .filter((skillId, skillIndex) => skillId && skillIndex !== index)
 
                     const availableSkills = technicalSkillsCatalog.filter(
-                      (skill) => !selectedSkillIds.includes(skill.id) || skill.id === row.skillId
+                      (skill) => !selectedSkillIds.includes(skill.id) || skill.id === row.skillId,
                     )
 
                     return (
@@ -363,7 +366,7 @@ export function EmployeeCreateDialog({
                         style={{ borderColor: 'var(--color-border)' }}
                       >
                         <div className="min-w-0 space-y-2">
-                          <Label>Compétence {index + 1}</Label>
+                          <Label>Competence {index + 1}</Label>
                           <Select
                             value={row.skillId}
                             onValueChange={(value) => updateTechnicalSkillRow(index, { skillId: value })}
@@ -372,10 +375,10 @@ export function EmployeeCreateDialog({
                               <SelectValue
                                 placeholder={
                                   isSkillsLoading
-                                    ? 'Chargement des compétences...'
+                                    ? 'Chargement des competences...'
                                     : hasTechnicalSkillOptions
-                                      ? 'Sélectionner une compétence'
-                                      : 'Aucune compétence technique disponible'
+                                      ? 'Selectionner une competence'
+                                      : 'Aucune competence technique disponible'
                                 }
                               />
                             </SelectTrigger>
@@ -388,7 +391,7 @@ export function EmployeeCreateDialog({
                                 ))
                               ) : (
                                 <div className="px-2 py-2 text-sm text-muted-foreground">
-                                  Aucune autre compétence disponible
+                                  Aucune autre competence disponible
                                 </div>
                               )}
                             </SelectContent>
@@ -402,7 +405,7 @@ export function EmployeeCreateDialog({
                             onValueChange={(value) => updateTechnicalSkillRow(index, { level: Number(value) })}
                           >
                             <SelectTrigger className="w-full min-w-0">
-                              <SelectValue placeholder="Sélectionner un niveau" />
+                              <SelectValue placeholder="Selectionner un niveau" />
                             </SelectTrigger>
                             <SelectContent position="popper" className="max-h-64" sideOffset={6}>
                               {skillLevelOptions.map((option) => (
@@ -420,7 +423,7 @@ export function EmployeeCreateDialog({
                               type="button"
                               variant="outline"
                               size="icon"
-                              aria-label={`Supprimer la compétence ${index + 1}`}
+                              aria-label={`Supprimer la competence ${index + 1}`}
                               onClick={() => onRemoveTechnicalSkill(index)}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -436,13 +439,13 @@ export function EmployeeCreateDialog({
 
                 {hasDuplicateSelection && (
                   <p className="text-sm" style={{ color: '#991B1B' }}>
-                    Chaque compétence technique doit être unique dans le formulaire.
+                    Chaque competence technique doit etre unique dans le formulaire.
                   </p>
                 )}
 
                 {!isSkillsLoading && !hasTechnicalSkillOptions && (
                   <p className="text-sm" style={{ color: '#991B1B' }}>
-                    Aucune compétence technique active n&apos;est disponible dans le catalogue RH.
+                    Aucune competence technique active n&apos;est disponible dans le catalogue RH.
                   </p>
                 )}
 
@@ -455,12 +458,12 @@ export function EmployeeCreateDialog({
                       onClick={onAddTechnicalSkill}
                     >
                       <Plus className="h-4 w-4" />
-                      Ajouter une autre compétence
+                      Ajouter une autre competence
                     </Button>
                   </div>
                 ) : hasTechnicalSkillOptions ? (
                   <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    Toutes les compétences techniques disponibles sont déjà représentées dans le formulaire.
+                    Toutes les competences techniques disponibles sont deja representees dans le formulaire.
                   </p>
                 ) : null}
               </div>
@@ -468,7 +471,7 @@ export function EmployeeCreateDialog({
 
             {formData.role === 'CHEF' && (
               <div className="space-y-2">
-                <Label>Affecter des collaborateurs (subordonnés)</Label>
+                <Label>Affecter des collaborateurs (subordonnes)</Label>
                 <div
                   className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2"
                   style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
@@ -515,7 +518,7 @@ export function EmployeeCreateDialog({
               disabled={isSubmitting}
               style={{ backgroundColor: 'var(--color-brand-blue)', color: 'white' }}
             >
-              {isSubmitting ? 'Création...' : 'Créer le compte'}
+              {isSubmitting ? 'Creation...' : 'Creer le compte'}
             </Button>
           </DialogFooter>
         </form>

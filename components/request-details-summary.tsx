@@ -35,6 +35,9 @@ export function RequestDetailsSummary({
   })
   const isLeaveRequest = isLeaveRequestType(request.type)
   const documentTypeLabel = request.type === "DOCUMENT" ? getDocumentTypeLabel(request.documentType) : null
+  const downloadLabel = request.documentType === "FICHE_PAIE"
+    ? "Telecharger la fiche de paie"
+    : "Telecharger le document"
 
   return (
     <div className="space-y-4">
@@ -117,7 +120,7 @@ export function RequestDetailsSummary({
             onClick={() => onDownload(request)}
           >
             <Download className="h-4 w-4" />
-            Telecharger le document
+            {downloadLabel}
           </Button>
         </div>
       )}

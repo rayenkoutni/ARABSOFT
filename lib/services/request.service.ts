@@ -33,6 +33,7 @@ export interface RequestCreatePayload {
   startDate?: string;
   endDate?: string;
   documentType?: RequestDocumentType | null;
+  reason?: string | null;
 }
 
 class RequestService {
@@ -89,11 +90,12 @@ class RequestService {
     return `/api/requests/${id}/document`;
   }
 
-  /**
-   * Get the protected download URL for a generated request document
-   */
-  getGeneratedDocumentDownloadUrl(id: string): string {
-    return `/api/requests/${id}/document`;
+  getRequestDownloadUrl(request: Pick<Request, 'id' | 'documentType' | 'payslip'>): string {
+    if (request.documentType === 'FICHE_PAIE' && request.payslip?.id) {
+      return `/api/payslips/${request.payslip.id}/pdf`;
+    }
+
+    return this.getGeneratedDocumentDownloadUrl(request.id);
   }
 
   /**
@@ -110,6 +112,7 @@ class RequestService {
         startDate: payload.startDate || null,
         endDate: payload.endDate || null,
         documentType: payload.documentType ?? null,
+        reason: payload.reason ?? null,
       })
     });
     if (!res.ok) {

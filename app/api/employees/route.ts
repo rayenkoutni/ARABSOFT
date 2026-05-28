@@ -7,6 +7,7 @@ import crypto from "crypto"
 import { Prisma, Role } from "@prisma/client"
 import { sendEmail } from "@/lib/mailer"
 import { getTodayDateOnly, isDateOnlyWithinRange, toDateOnlyValue } from "@/lib/leave-request"
+import { createInitialSalaryHistory } from "@/lib/services/server/salary-history.service"
 import {
   employeeCreateInputSchema,
   initializeCollaboratorSkillProfile,
@@ -62,6 +63,8 @@ function mapEmployeeListItem(employee: {
   managerId: string | null
   hireDate: Date | null
   leaveBalance: number | null
+  salaryGradeId: string | null
+  salaryOverride: number | null
   requests: Array<{ id: string; startDate: Date | null; endDate: Date | null }>
 }) {
   const todayDate = getTodayDateOnly()
@@ -88,6 +91,8 @@ function mapEmployeeListItem(employee: {
     managerId: employee.managerId,
     hireDate: employee.hireDate ? employee.hireDate.toISOString() : null,
     leaveBalance: typeof employee.leaveBalance === "number" ? employee.leaveBalance : 0,
+    salaryGradeId: employee.salaryGradeId,
+    salaryOverride: employee.salaryOverride,
     onLeave,
   }
 }
@@ -111,6 +116,8 @@ export async function GET() {
           managerId: true,
           hireDate: true,
           leaveBalance: true,
+          salaryGradeId: true,
+          salaryOverride: true,
           requests: {
             where: { type: "CONGE", status: "APPROUVE" },
             select: { id: true, startDate: true, endDate: true },
@@ -131,9 +138,29 @@ export async function GET() {
     if (user.role === "CHEF") {
       const team = await prisma.employee.findMany({
         where: { managerId: user.id },
-        select: { id: true, name: true, email: true, role: true, department: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          avatar: true,
+          role: true,
+          department: true,
+          position: true,
+          managerId: true,
+          hireDate: true,
+          leaveBalance: true,
+          salaryGradeId: true,
+          salaryOverride: true,
+          requests: {
+            where: { type: "CONGE", status: "APPROUVE" },
+            select: { id: true, startDate: true, endDate: true },
+          },
+        },
       })
-      return NextResponse.json(team)
+      return NextResponse.json(
+        team.map((employee: (typeof team)[number]) => mapEmployeeListItem(employee))
+      )
     }
 
     const self = await prisma.employee.findUnique({
@@ -170,10 +197,22 @@ export async function POST(req: Request) {
 
   const { name, email, phone, role, department, position, managerId, hireDate, subordinateIds, technicalSkills, salaryGradeId, salaryOverride } = input
 
-  let finalRole = role
+  if (!salaryGradeId) {
+    return NextResponse.json({ error: "Le grade salarial est obligatoire" }, { status: 400 })
+  }
+
   if (salaryGradeId) {
     const grade = await prisma.salaryGrade.findUnique({ where: { id: salaryGradeId } })
-    if (grade) finalRole = grade.role
+    if (!grade) {
+      return NextResponse.json({ error: "Grade salarial introuvable" }, { status: 404 })
+    }
+
+    if (grade.role !== role) {
+      return NextResponse.json(
+        { error: "Le grade salarial selectionne ne correspond pas au role choisi" },
+        { status: 400 },
+      )
+    }
   }
 
   const existing = await prisma.employee.findUnique({ where: { email } })
@@ -192,7 +231,7 @@ export async function POST(req: Request) {
           email,
           phone: phone || null,
           password: hashedPassword,
-          role: finalRole,
+          role,
           department: department || null,
           position: position || null,
           managerId: managerId || null,
@@ -206,6 +245,14 @@ export async function POST(req: Request) {
           department: true, position: true, managerId: true, hireDate: true, leaveBalance: true,
           salaryGradeId: true, salaryOverride: true
         }
+      })
+
+      await createInitialSalaryHistory(tx, {
+        employeeId: employee.id,
+        salaryGradeId: employee.salaryGradeId,
+        salaryOverride: employee.salaryOverride,
+        fallbackRole: employee.role,
+        validFrom: employee.hireDate,
       })
 
       if (role === Role.COLLABORATEUR) {

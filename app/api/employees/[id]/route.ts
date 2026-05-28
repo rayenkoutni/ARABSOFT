@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs"
 import crypto from "crypto"
 import { sendEmail } from "@/lib/mailer"
 import { employeeUpdateInputSchema } from "@/lib/skills"
+import { syncSalaryHistoryOnCompensationChange } from "@/lib/services/server/salary-history.service"
 import { ZodError } from "zod"
 
 export async function GET(
@@ -104,14 +105,28 @@ export async function PUT(
 
   const { name, email, phone, role, department, position, managerId, hireDate, resetPassword, salaryGradeId, salaryOverride } = body
 
-  let finalRole = role
-  if (salaryGradeId) {
-    const grade = await prisma.salaryGrade.findUnique({ where: { id: salaryGradeId } })
-    if (grade) finalRole = grade.role
-  }
-
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: "Employe introuvable" }, { status: 404 })
+
+  const resultingSalaryGradeId = salaryGradeId !== undefined ? salaryGradeId : existing.salaryGradeId
+  if (!resetPassword && !resultingSalaryGradeId) {
+    return NextResponse.json({ error: "Le grade salarial est obligatoire" }, { status: 400 })
+  }
+
+  const targetRole = role ?? existing.role
+  if (salaryGradeId) {
+    const grade = await prisma.salaryGrade.findUnique({ where: { id: salaryGradeId } })
+    if (!grade) {
+      return NextResponse.json({ error: "Grade salarial introuvable" }, { status: 404 })
+    }
+
+    if (grade.role !== targetRole) {
+      return NextResponse.json(
+        { error: "Le grade salarial selectionne ne correspond pas au role du collaborateur" },
+        { status: 400 },
+      )
+    }
+  }
 
   if (email && email !== existing.email) {
     const emailTaken = await prisma.employee.findUnique({ where: { email } })
@@ -143,7 +158,7 @@ export async function PUT(
   if (name !== undefined) updateData.name = name
   if (email !== undefined) updateData.email = email
   if (phone !== undefined) updateData.phone = phone || null
-  if (finalRole !== undefined) updateData.role = finalRole
+  if (role !== undefined) updateData.role = role
   if (department !== undefined) updateData.department = department || null
   if (position !== undefined) updateData.position = position || null
   if (managerId !== undefined) updateData.managerId = managerId || null
@@ -157,14 +172,28 @@ export async function PUT(
     updateData.password = await bcrypt.hash(tempPassword, 10)
   }
 
-  const updated = await prisma.employee.update({
-    where: { id },
-    data: updateData,
-    select: {
-      id: true, name: true, email: true, phone: true, avatar: true, role: true,
-      department: true, position: true, managerId: true, hireDate: true, leaveBalance: true,
-      salaryGradeId: true, salaryOverride: true
-    }
+  const updated = await prisma.$transaction(async (tx) => {
+    const employee = await tx.employee.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true, name: true, email: true, phone: true, avatar: true, role: true,
+        department: true, position: true, managerId: true, hireDate: true, leaveBalance: true,
+        salaryGradeId: true, salaryOverride: true
+      }
+    })
+
+    await syncSalaryHistoryOnCompensationChange(tx, {
+      employeeId: employee.id,
+      previousSalaryGradeId: existing.salaryGradeId,
+      previousSalaryOverride: existing.salaryOverride,
+      nextSalaryGradeId: employee.salaryGradeId,
+      nextSalaryOverride: employee.salaryOverride,
+      fallbackRole: employee.role,
+      validFrom: new Date(),
+    })
+
+    return employee
   })
 
   if (tempPassword) {
@@ -193,7 +222,7 @@ export async function PUT(
     ...updated,
     message: tempPassword
       ? `Le mot de passe a ete reinitialise et un email a ete envoye a ${updated.email}`
-      : updated
+      : "Collaborateur mis a jour avec succes",
   })
 }
 

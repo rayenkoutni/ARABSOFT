@@ -80,7 +80,7 @@ export default function RequestsPage() {
   const approvedCount = searchedRequests.filter((request) => request.status === 'APPROUVE').length
   const rejectedCount = searchedRequests.filter((request) => request.status === 'REJETE').length
   const handleDownloadDocument = (request: Request) => {
-    window.open(requestService.getGeneratedDocumentDownloadUrl(request.id), '_blank', 'noopener,noreferrer')
+    window.open(requestService.getRequestDownloadUrl(request), '_blank', 'noopener,noreferrer')
   }
 
   return (

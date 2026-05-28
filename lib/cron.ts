@@ -47,7 +47,7 @@ export function initCron() {
         }
       }
 
-      console.log(`SLA cron processed ${pendingRequests.length} requests`)
+      console.info(`SLA cron processed ${pendingRequests.length} requests`)
     } catch (e) {
       console.error('SLA cron error:', e)
     } finally {
@@ -55,5 +55,6 @@ export function initCron() {
     }
   })
 
-  console.log('Enhanced SLA cron initialized (5-minute intervals)')
+  console.info('Enhanced SLA cron initialized (5-minute intervals)')
 }
+

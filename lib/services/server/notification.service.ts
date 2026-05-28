@@ -16,7 +16,7 @@ class NotificationServerService {
       // Also emit via Socket.io for real-time notification
       socketService.emitToUser(employeeId, 'new_notification', notification);
 
-      console.log(`📢 Notification created for employee ${employeeId}: ${title}`);
+      console.info(`📢 Notification created for employee ${employeeId}: ${title}`);
       return notification;
     } catch (error) {
       console.error('❌ Failed to create notification:', error);
@@ -44,3 +44,4 @@ class NotificationServerService {
 }
 
 export const notificationServerService = new NotificationServerService();
+

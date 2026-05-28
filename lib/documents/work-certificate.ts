@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
+import { getRhSignatureDataUrl } from '@/lib/documents/signature'
 
 export interface GenerateWorkCertificatePdfInput {
   employeeName: string
@@ -71,6 +72,7 @@ async function fileToDataUrl(filePath: string, mimeType: string) {
 
 async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) {
   const logoDataUrl = await fileToDataUrl(LOGO_PATH, 'image/png')
+  const signatureDataUrl = await getRhSignatureDataUrl()
   const employeeName = normalizeLabel(input.employeeName)
 
   if (!employeeName) {
@@ -170,6 +172,14 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
         text-align: center;
       }
 
+      .signature-image {
+        width: 58mm;
+        height: auto;
+        display: block;
+        margin: 0 auto -2mm;
+        object-fit: contain;
+      }
+
       .signature-title {
         font-size: 11pt;
         font-weight: 700;
@@ -226,6 +236,7 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
 
         <div class="signature-area">
           <div class="signature-title">Visa RH</div>
+          <img class="signature-image" src="${signatureDataUrl}" alt="Signature RH" />
           <div class="signature-line"></div>
           <p class="signature-name">${escapeHtml(validatedByName)}</p>
           <p class="signature-role">${escapeHtml(validatedByRole)}</p>

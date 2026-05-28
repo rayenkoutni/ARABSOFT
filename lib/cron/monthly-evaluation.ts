@@ -12,7 +12,7 @@ import { startOfMonth, endOfMonth, format } from 'date-fns'
  */
 
 async function runMonthlyEvaluations() {
-  console.log('[Cron] Starting monthly evaluation job...')
+  console.info('[Cron] Starting monthly evaluation job...')
 
   const now = new Date()
   const monthStart = startOfMonth(now)
@@ -111,7 +111,7 @@ async function runMonthlyEvaluations() {
       }
     }
 
-    console.log(`[Cron] Monthly evaluations completed. Created: ${createdCount}, Skipped: ${skippedCount}`)
+    console.info(`[Cron] Monthly evaluations completed. Created: ${createdCount}, Skipped: ${skippedCount}`)
   } catch (error) {
     console.error('[Cron] Error during monthly evaluation job:', error)
   }
@@ -133,8 +133,9 @@ if (process.env.NODE_ENV !== 'test') {
       }
     })
 
-    console.log('[Cron] Monthly evaluation job registered')
+    console.info('[Cron] Monthly evaluation job registered')
   }
 }
 
 export { runMonthlyEvaluations }
+

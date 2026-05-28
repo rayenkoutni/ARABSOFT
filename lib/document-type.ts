@@ -8,10 +8,15 @@ export const documentTypeOptions: Array<{
     value: 'ATTESTATION_TRAVAIL',
     label: 'Attestation de travail',
   },
+  {
+    value: 'FICHE_PAIE',
+    label: 'Fiche de Paie',
+  },
 ]
 
 export const documentTypeLabels: Record<RequestDocumentType, string> = {
   ATTESTATION_TRAVAIL: 'Attestation de travail',
+  FICHE_PAIE: 'Fiche de Paie',
 }
 
 export function getDocumentTypeLabel(documentType?: string | null) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, ReactNode, useEffect } from 'react'
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { User, UserRole } from '../types'
 import { io, Socket } from 'socket.io-client'
 
@@ -18,20 +18,18 @@ interface AuthContextType {
 
 const STORAGE_KEY_PREFIX = 'trusted_device_'
 
-function checkRememberedDevice(userId: string): boolean {
+function getInitialOtpVerified(userId: string): boolean {
   if (typeof window === 'undefined') return false
   const key = STORAGE_KEY_PREFIX + userId
   const stored = localStorage.getItem(key)
   if (!stored) return false
+
   try {
     const data = JSON.parse(stored)
-    if (data.expiresAt && new Date(data.expiresAt).getTime() > Date.now()) {
-      return true
-    }
+    return Boolean(data.expiresAt && new Date(data.expiresAt).getTime() > Date.now())
   } catch {
     return false
   }
-  return false
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -40,85 +38,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [socket, setSocket] = useState<Socket | null>(null)
-  
-  // Load initial OTP state from localStorage (if user exists there)
-  const getInitialOtpVerified = (userId: string): boolean => {
-    if (typeof window === 'undefined') return false
-    const key = STORAGE_KEY_PREFIX + userId
-    const stored = localStorage.getItem(key)
-    if (!stored) return false
-    try {
-      const data = JSON.parse(stored)
-      if (data.expiresAt && new Date(data.expiresAt).getTime() > Date.now()) {
-        return true
-      }
-    } catch {
-      return false
-    }
-    return false
-  }
-  
-  // Initialize user from localStorage if available (to check OTP status immediately)
+
   const [initialUser] = useState<User | null>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('hr_user')
-      if (stored) {
-        try {
-          return JSON.parse(stored)
-        } catch {
-          return null
-        }
-      }
+    if (typeof window === 'undefined') {
+      return null
     }
-    return null
-  })
-  
-  const [isOtpVerified, setIsOtpVerified] = useState<boolean>(() => {
-    return initialUser ? getInitialOtpVerified(initialUser.id) : false
+
+    const stored = localStorage.getItem('hr_user')
+    if (!stored) {
+      return null
+    }
+
+    try {
+      return JSON.parse(stored)
+    } catch {
+      return null
+    }
   })
 
-  // Update OTP verified state when user is set from API
+  const [isOtpVerified, setIsOtpVerified] = useState<boolean>(() =>
+    initialUser ? getInitialOtpVerified(initialUser.id) : false,
+  )
+
   useEffect(() => {
     if (user) {
-      const trusted = getInitialOtpVerified(user.id)
-      setIsOtpVerified(trusted)
+      setIsOtpVerified(getInitialOtpVerified(user.id))
     }
   }, [user])
 
-  // Initialize socket connection once when user is authenticated
   useEffect(() => {
     if (user) {
       const socketInstance = io({
         path: '/socket.io',
         transports: ['websocket', 'polling'],
       })
-      
-      socketInstance.on('connect', () => {
-        console.log('Global socket connected')
-      })
-      
-      socketInstance.on('disconnect', () => {
-        console.log('Global socket disconnected')
-      })
-      
+
       setSocket(socketInstance)
-      
+
       return () => {
         socketInstance.disconnect()
       }
-    } else {
-      if (socket) {
-        socket.disconnect()
-        setSocket(null)
-      }
+    }
+
+    if (socket) {
+      socket.disconnect()
+      setSocket(null)
     }
   }, [user])
 
-  // Auth check on mount
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const res = await fetch("/api/auth/me")
+        const res = await fetch('/api/auth/me')
         if (res.ok) {
           const data = await res.json()
           if (data.authenticated && data.user) {
@@ -140,16 +111,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false)
       }
     }
+
     checkAuth()
   }, [])
 
   const login = async (email: string, password: string) => {
     setIsLoading(true)
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       })
 
       const responseText = await res.text()
@@ -159,14 +131,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(data?.error || 'Erreur lors de la connexion')
       }
 
-      const foundUser = data
-      if (!foundUser) {
-        throw new Error('Réponse de connexion invalide')
+      if (!data) {
+        throw new Error('Reponse de connexion invalide')
       }
 
-      setUser(foundUser)
-      localStorage.setItem('hr_user', JSON.stringify(foundUser))
-      // Mark as fresh login for OTP check
+      setUser(data)
+      localStorage.setItem('hr_user', JSON.stringify(data))
       if (typeof window !== 'undefined') {
         sessionStorage.setItem('otp_pending', 'true')
       }
@@ -177,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" })
+      await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
       setUser(null)
       localStorage.removeItem('hr_user')
@@ -187,17 +157,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // switchRole is kept to avoid breaking Settings UI typing, but doesn't actually mutate database role
   const switchRole = (role: UserRole) => {
-    if (user) {
-      const updatedUser = { ...user, role }
-      setUser(updatedUser)
-      localStorage.setItem('hr_user', JSON.stringify(updatedUser))
-    }
+    if (!user) return
+
+    const updatedUser = { ...user, role }
+    setUser(updatedUser)
+    localStorage.setItem('hr_user', JSON.stringify(updatedUser))
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: !!user, isOtpVerified, login, logout, switchRole, socket, setOtpVerified: setIsOtpVerified }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        isAuthenticated: !!user,
+        isOtpVerified,
+        login,
+        logout,
+        switchRole,
+        socket,
+        setOtpVerified: setIsOtpVerified,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

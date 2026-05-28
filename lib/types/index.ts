@@ -22,7 +22,7 @@ export type RequestStatus = 'BROUILLON' | 'EN_ATTENTE_CHEF' | 'EN_ATTENTE_RH' | 
 
 // Request type — matches Prisma enum
 export type RequestType = 'CONGE' | 'AUTORISATION' | 'DOCUMENT' | 'PRET'
-export type RequestDocumentType = 'ATTESTATION_TRAVAIL'
+export type RequestDocumentType = 'ATTESTATION_TRAVAIL' | 'FICHE_PAIE'
 
 // History entry from Prisma
 export interface RequestHistoryEntry {
@@ -69,6 +69,9 @@ export interface Request {
     documentType: RequestDocumentType | string
     reference: string
     generatedAt: string
+  } | null
+  payslip?: {
+    id: string
   } | null
   history: RequestHistoryEntry[]
 }

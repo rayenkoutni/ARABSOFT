@@ -103,7 +103,6 @@ export function Navigation() {
 
      // Listen for custom event to refresh notifications
      const handleRefresh = () => {
-       console.log("🔔 Notification refresh triggered")
        fetchNotifications()
      }
      window.addEventListener('refreshNotifications', handleRefresh)
@@ -200,7 +199,7 @@ export function Navigation() {
   } else if (user.role === 'CHEF') {
     navItems.push(
       {
-        label: 'Mon Équipe',
+        label: 'Mon Equipe',
         href: '/dashboard/equipe',
         icon: <Users className="h-4 w-4" />,
       },
@@ -342,7 +341,7 @@ export function Navigation() {
             <DropdownMenuContent align="end">
               <DropdownMenuItem className="cursor-pointer" onClick={() => router.push('/dashboard/settings')}>
                 <Settings className="h-4 w-4 mr-2" />
-                Paramètres
+                Parametres
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={logout} className="cursor-pointer" style={{ color: 'var(--color-danger)' }}>

@@ -46,12 +46,12 @@ class SocketService {
       const user = await this.authenticateSocket(socket);
 
       if (!user) {
-        console.log('⚠️ Unauthenticated socket connection, disconnecting');
+        console.info('⚠️ Unauthenticated socket connection, disconnecting');
         socket.disconnect();
         return;
       }
 
-      console.log(`👤 User ${user.id} (${user.role}) connected (Socket: ${socket.id})`);
+      console.info(`👤 User ${user.id} (${user.role}) connected (Socket: ${socket.id})`);
 
       // Join user's personal room
       socket.join(user.id);
@@ -67,7 +67,7 @@ class SocketService {
 
       // Handle disconnect
       socket.on('disconnect', () => {
-        console.log(`🔌 User ${user.id} disconnected (Socket: ${socket.id})`);
+        console.info(`🔌 User ${user.id} disconnected (Socket: ${socket.id})`);
         const sockets = this.userSockets.get(user.id);
         if (sockets) {
           sockets.delete(socket.id);
@@ -165,4 +165,5 @@ class SocketService {
 }
 
 export const socketService = new SocketService();
+
 

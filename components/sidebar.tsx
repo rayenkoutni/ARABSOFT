@@ -16,7 +16,6 @@ import {
   MessageSquare,
   ClipboardList,
   Sparkles,
-  AlertCircle,
 } from 'lucide-react'
 
 interface NavItem {
@@ -32,7 +31,6 @@ export function Sidebar() {
   const pathname = usePathname()
   const [unreadCount, setUnreadCount] = useState(0)
 
-  // Fetch unread message count
   useEffect(() => {
     const fetchUnreadCount = async () => {
       try {
@@ -41,7 +39,7 @@ export function Sidebar() {
           const conversations = await res.json()
           const totalUnread = conversations.reduce(
             (sum: number, conv: { unreadCount: number }) => sum + conv.unreadCount,
-            0
+            0,
           )
           setUnreadCount(totalUnread)
         }
@@ -52,10 +50,7 @@ export function Sidebar() {
 
     fetchUnreadCount()
 
-    // Refresh every 30 seconds
     const interval = setInterval(fetchUnreadCount, 30000)
-
-    // Listen for refresh event
     const handleRefresh = () => fetchUnreadCount()
     window.addEventListener('refreshNotifications', handleRefresh)
 
@@ -81,7 +76,6 @@ export function Sidebar() {
     },
   ]
 
-  // Role-specific navigation
   if (user.role === 'RH') {
     navItems.push(
       {
@@ -110,7 +104,7 @@ export function Sidebar() {
         icon: <FolderKanban className="h-4 w-4" />,
       },
       {
-        label: 'Journal d\'audit',
+        label: "Journal d'audit",
         href: '/dashboard/audit',
         icon: <ClipboardList className="h-4 w-4" />,
       },
@@ -118,12 +112,12 @@ export function Sidebar() {
   } else if (user.role === 'CHEF') {
     navItems.push(
       {
-        label: 'Mon Équipe',
+        label: 'Mon Equipe',
         href: '/dashboard/equipe',
         icon: <Users className="h-4 w-4" />,
       },
       {
-        label: 'Demandes de l\'equipe',
+        label: "Demandes de l'equipe",
         href: '/dashboard/team-requests',
         icon: <FileText className="h-4 w-4" />,
       },
@@ -141,7 +135,7 @@ export function Sidebar() {
         label: 'Competences',
         href: '/dashboard/skills',
         icon: <Sparkles className="h-4 w-4" />,
-      }
+      },
     )
   } else {
     navItems.push(
@@ -164,7 +158,7 @@ export function Sidebar() {
         label: 'Competences',
         href: '/dashboard/skills',
         icon: <Sparkles className="h-4 w-4" />,
-      }
+      },
     )
   }
 
@@ -186,18 +180,25 @@ export function Sidebar() {
               'md:justify-center lg:justify-start md:px-2 lg:px-4',
               pathname === item.href
                 ? 'bg-blue-50 dark:bg-slate-700 text-sidebar-primary'
-                : 'text-sidebar-foreground hover:bg-gray-50 dark:hover:bg-slate-700'
+                : 'text-sidebar-foreground hover:bg-gray-50 dark:hover:bg-slate-700',
             )}
-            style={pathname === item.href ? {
-              backgroundColor: 'var(--color-hover)',
-              color: 'var(--color-brand-blue)',
-              borderLeft: '3px solid var(--color-brand-amber)'
-            } : undefined}
+            style={
+              pathname === item.href
+                ? {
+                    backgroundColor: 'var(--color-hover)',
+                    color: 'var(--color-brand-blue)',
+                    borderLeft: '3px solid var(--color-brand-amber)',
+                  }
+                : undefined
+            }
           >
             <span style={{ color: pathname === item.href ? '#2563B0' : '#6B7280' }}>
               {item.icon}
             </span>
-            <span className="hidden lg:inline" style={{ fontWeight: pathname === item.href ? 600 : 500 }}>
+            <span
+              className="hidden lg:inline"
+              style={{ fontWeight: pathname === item.href ? 600 : 500 }}
+            >
               {item.label}
             </span>
             {item.badge && item.badge > 0 && (
@@ -220,18 +221,25 @@ export function Sidebar() {
             'md:justify-center lg:justify-start md:px-2 lg:px-4',
             pathname === '/dashboard/settings'
               ? 'bg-blue-50 dark:bg-slate-700 text-sidebar-primary'
-              : 'text-sidebar-foreground hover:bg-gray-50 dark:hover:bg-slate-700'
+              : 'text-sidebar-foreground hover:bg-gray-50 dark:hover:bg-slate-700',
           )}
-          style={pathname === '/dashboard/settings' ? {
-            backgroundColor: 'var(--color-hover)',
-            color: 'var(--color-brand-blue)',
-            borderLeft: '3px solid var(--color-brand-amber)'
-          } : undefined}
+          style={
+            pathname === '/dashboard/settings'
+              ? {
+                  backgroundColor: 'var(--color-hover)',
+                  color: 'var(--color-brand-blue)',
+                  borderLeft: '3px solid var(--color-brand-amber)',
+                }
+              : undefined
+          }
         >
           <span style={{ color: pathname === '/dashboard/settings' ? '#2563B0' : '#6B7280' }}>
             <Settings className="h-4 w-4" />
           </span>
-          <span className="hidden lg:inline" style={{ fontWeight: pathname === '/dashboard/settings' ? 600 : 500 }}>
+          <span
+            className="hidden lg:inline"
+            style={{ fontWeight: pathname === '/dashboard/settings' ? 600 : 500 }}
+          >
             Parametres
           </span>
         </Link>

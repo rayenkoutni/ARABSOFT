@@ -145,11 +145,19 @@ function ApprovalsContent() {
   const selectedDocumentTypeLabel = selectedRequest?.type === 'DOCUMENT'
     ? getDocumentTypeLabel(selectedRequest.documentType)
     : null
-  const approveActionLabel = selectedRequest?.type === 'DOCUMENT' && selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
-    ? 'Approuver et generer le document'
+  const approveActionLabel = selectedRequest?.type === 'DOCUMENT'
+    ? selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
+      ? 'Approuver et generer le document'
+      : selectedRequest.documentType === 'FICHE_PAIE'
+        ? 'Approuver et generer la fiche de paie'
+        : 'Approuver'
     : 'Approuver'
-  const confirmApproveActionLabel = selectedRequest?.type === 'DOCUMENT' && selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
-    ? 'Approuver et generer le document'
+  const confirmApproveActionLabel = selectedRequest?.type === 'DOCUMENT'
+    ? selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
+      ? 'Approuver et generer le document'
+      : selectedRequest.documentType === 'FICHE_PAIE'
+        ? 'Approuver et generer la fiche de paie'
+        : "Confirmer l'approbation"
     : "Confirmer l'approbation"
   const pendingRequests = requests.filter((request) => request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH')
   const normalizedSearchTerm = normalizeSearchText(searchTerm)

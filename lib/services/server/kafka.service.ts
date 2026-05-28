@@ -21,7 +21,7 @@ class KafkaService {
     if (this.producer) return this.producer;
     this.producer = this.kafka.producer();
     await this.producer.connect();
-    console.log('✅ Kafka producer connected');
+    console.info('✅ Kafka producer connected');
     return this.producer;
   }
 
@@ -29,7 +29,7 @@ class KafkaService {
     if (this.consumer) return this.consumer;
     this.consumer = this.kafka.consumer({ groupId });
     await this.consumer.connect();
-    console.log(`✅ Kafka consumer connected (Group: ${groupId})`);
+    console.info(`✅ Kafka consumer connected (Group: ${groupId})`);
     return this.consumer;
   }
 
@@ -62,9 +62,10 @@ class KafkaService {
   async disconnect() {
     if (this.producer) await this.producer.disconnect();
     if (this.consumer) await this.consumer.disconnect();
-    console.log('🔌 Kafka disconnected');
+    console.info('🔌 Kafka disconnected');
   }
 }
 
 export const kafkaService = new KafkaService();
+
 

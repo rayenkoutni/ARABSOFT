@@ -100,7 +100,7 @@ export default function ChatPage() {
   // Set isClient to true after hydration
   useEffect(() => {
     if (socket) {
-      console.log('✅ ChatPage using socket:', socket.id)
+      console.info('✅ ChatPage using socket:', socket.id)
     }
     setIsClient(true)
     // Initialize audio context for sound notifications
@@ -362,7 +362,7 @@ export default function ChatPage() {
     const recipient = selectedConversation.participants.find(p => p.id !== user.id)
     if (!recipient) return
 
-    console.log('📤 Emitting send_message:', {
+    console.info('📤 Emitting send_message:', {
       conversationId: selectedConversation.id,
       content: newMessage.trim(),
       recipientId: recipient.id,
@@ -1007,3 +1007,4 @@ export default function ChatPage() {
     </div>
   )
 }
+

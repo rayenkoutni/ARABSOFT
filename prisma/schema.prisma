@@ -134,6 +134,7 @@ model Employee {
   salaryGrade          SalaryGrade?       @relation(fields: [salaryGradeId], references: [id])
   bonuses              Bonus[]
   payslips             Payslip[]
+  salaryHistory        SalaryHistory[]
 }
 
 model Request {
@@ -198,25 +199,6 @@ model RequestHistory {
   createdAt  DateTime @default(now())
 
   request    Request  @relation(fields: [requestId], references: [id])
-}
-
-model GeneratedDocument {
-  id              String   @id @default(uuid())
-  requestId       String   @unique
-  employeeId      String
-  documentType    String
-  reference       String   @unique
-  fileName        String
-  filePath        String
-  generatedById   String
-  generatedByName String
-  generatedAt     DateTime @default(now())
-
-  request         Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  employee        Employee @relation(fields: [employeeId], references: [id])
-
-  @@index([employeeId])
-  @@index([documentType])
 }
 
 model Task {
@@ -440,8 +422,27 @@ model SalaryGrade {
   updatedAt   DateTime @updatedAt
 
   employees Employee[]
+  history   SalaryHistory[]
 
   @@unique([role, level])
+}
+
+model SalaryHistory {
+  id             String       @id @default(uuid())
+  employeeId     String
+  gradeId        String?
+  role           Role
+  level          Int
+  baseSalary     Float
+  salaryOverride Float?
+  resolvedSalary Float
+  validFrom      DateTime
+  validTo        DateTime?
+  createdAt      DateTime     @default(now())
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  grade          SalaryGrade? @relation(fields: [gradeId], references: [id])
+
+  @@index([employeeId, validFrom])
 }
 
 model BonusRule {
@@ -486,6 +487,8 @@ model Payslip {
 
   employee       Employee          @relation(fields: [employeeId], references: [id])
   request        Request?          @relation(fields: [requestId], references: [id])
+
+  @@unique([employeeId, period, periodType])
 }
 
 model Notification {

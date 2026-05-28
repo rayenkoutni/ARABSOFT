@@ -51,7 +51,10 @@ The application will be available at [http://localhost:3000](http://localhost:30
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:password@db:5432/portail_rh` |
+| `DATABASE_URL` | PostgreSQL connection string for local dev | `postgresql://postgres:password@localhost:5432/portail_rh` |
+| `POSTGRES_USER` | PostgreSQL user for Docker | `postgres` |
+| `POSTGRES_PASSWORD` | PostgreSQL password for Docker | `password` |
+| `POSTGRES_DB` | PostgreSQL database name for Docker | `portail_rh` |
 | `JWT_SECRET` | Secret key for JWT signing | `arabsoft_secret` |
 | `GROQ_API_KEY` | API Key for AI task generation | (Required) |
 | `KAFKA_BROKER` | Address of the Kafka broker | `kafka:9092` |

@@ -60,6 +60,9 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
   const slaStatus = formatSlaStatus(request)
   const isLeaveRequest = isLeaveRequestType(request.type)
   const documentTypeLabel = request.type === 'DOCUMENT' ? getDocumentTypeLabel(request.documentType) : null
+  const downloadLabel = request.documentType === 'FICHE_PAIE'
+    ? 'Telecharger la fiche de paie'
+    : 'Telecharger le document'
   const leaveImpact = getLeaveImpactSummary({
     startDate: request.startDate,
     endDate: request.endDate,
@@ -143,7 +146,7 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
               }}
             >
               <Download className="h-4 w-4" />
-              Telecharger le document
+              {downloadLabel}
             </Button>
           )}
           {onView && (

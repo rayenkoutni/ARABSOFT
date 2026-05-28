@@ -18,6 +18,7 @@ const requestBaseSchema = z.object({
   startDate: optionalDateStringSchema,
   endDate: optionalDateStringSchema,
   documentType: z.enum(documentRequestTypes).optional().nullable(),
+  reason: z.string().trim().optional().nullable(),
 })
 
 export const requestInputSchema = requestBaseSchema.superRefine((value, ctx) => {
@@ -26,6 +27,14 @@ export const requestInputSchema = requestBaseSchema.superRefine((value, ctx) => 
       code: z.ZodIssueCode.custom,
       path: ["documentType"],
       message: "Le type de document est obligatoire pour une demande de document RH.",
+    })
+  }
+
+  if (value.type === "DOCUMENT" && value.documentType === "FICHE_PAIE" && !value.reason) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reason"],
+      message: "La periode est obligatoire pour une fiche de paie.",
     })
   }
 

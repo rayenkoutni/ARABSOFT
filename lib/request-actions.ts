@@ -23,7 +23,8 @@ export function canUserDownloadGeneratedDocument(
   if (
     request.type !== 'DOCUMENT' ||
     request.status !== 'APPROUVE' ||
-    !request.generatedDocument
+    (request.documentType === 'ATTESTATION_TRAVAIL' && !request.generatedDocument) ||
+    (request.documentType === 'FICHE_PAIE' && !request.payslip)
   ) {
     return false
   }

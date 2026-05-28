@@ -8,7 +8,7 @@ class ChatService {
   async init() {
     await kafkaService.initProducer();
     await kafkaService.subscribe(KAFKA.TOPICS.CHAT_MESSAGES, this.handleIncomingMessage.bind(this));
-    console.log('💬 Chat service initialized (Kafka + Socket)');
+    console.info('💬 Chat service initialized (Kafka + Socket)');
   }
 
   private async handleIncomingMessage(payload: any) {
@@ -61,7 +61,7 @@ class ChatService {
         `${savedMessage.sender.name}: ${savedMessage.content.substring(0, 100)}${savedMessage.content.length > 100 ? '...' : ''}`
       );
 
-      console.log(`✅ Message processed: ${savedMessage.id}`);
+      console.info(`✅ Message processed: ${savedMessage.id}`);
     } catch (error) {
       console.error('❌ Error in ChatService.handleIncomingMessage:', error);
     }
@@ -80,4 +80,5 @@ class ChatService {
 }
 
 export const chatService = new ChatService();
+
 

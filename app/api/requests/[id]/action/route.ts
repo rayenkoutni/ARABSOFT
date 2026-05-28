@@ -53,6 +53,54 @@ interface PreparedGeneratedDocument {
   generatedAt: Date
 }
 
+async function validatePayslipGenerationPreconditions(requestId: string) {
+  const request = await prisma.request.findUnique({
+    where: { id: requestId },
+    include: {
+      employee: {
+        select: {
+          id: true,
+          salaryHistory: {
+            select: {
+              id: true,
+            },
+          },
+        },
+      },
+    },
+  })
+
+  if (!request) {
+    throw new Error("NOT_FOUND")
+  }
+
+  if (!request.reason) {
+    throw new Error("PAYSLIP_PERIOD_MISSING")
+  }
+
+  const [periodType, period] = request.reason.split(":")
+  if (!periodType || !period || !["MONTHLY", "ANNUAL"].includes(periodType)) {
+    throw new Error("PAYSLIP_PERIOD_INVALID")
+  }
+
+  if (request.employee.salaryHistory.length === 0) {
+    throw new Error("AUCUN_HISTORIQUE_SALAIRE")
+  }
+
+  const existingPayslip = await prisma.payslip.findFirst({
+    where: {
+      employeeId: request.employee.id,
+      period,
+      periodType: periodType as "MONTHLY" | "ANNUAL",
+    },
+    select: { id: true },
+  })
+
+  if (existingPayslip) {
+    throw new Error("PAYSLIP_ALREADY_EXISTS")
+  }
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -109,6 +157,17 @@ export async function POST(
       requestForGeneration.type === "DOCUMENT" &&
       requestForGeneration.documentType === "ATTESTATION_TRAVAIL" &&
       !requestForGeneration.generatedDocument
+
+    if (
+      action === "APPROVE" &&
+      user.role === "RH" &&
+      requestForGeneration &&
+      requestForGeneration.status === "EN_ATTENTE_RH" &&
+      requestForGeneration.type === "DOCUMENT" &&
+      requestForGeneration.documentType === "FICHE_PAIE"
+    ) {
+      await validatePayslipGenerationPreconditions(requestForGeneration.id)
+    }
 
     if (shouldPrepareDocument) {
       try {
@@ -337,6 +396,18 @@ export async function POST(
       if (error.message === "DOCUMENT_GENERATION_FAILED") {
         return NextResponse.json({ error: DOCUMENT_GENERATION_FAILED_MESSAGE }, { status: 500 })
       }
+
+      if (error.message === "AUCUN_HISTORIQUE_SALAIRE") {
+        return NextResponse.json({ error: "Aucun historique de salaire trouve" }, { status: 400 })
+      }
+
+      if (error.message === "PAYSLIP_ALREADY_EXISTS") {
+        return NextResponse.json({ error: "Une fiche de paie existe deja pour cette periode." }, { status: 409 })
+      }
+
+      if (error.message === "PAYSLIP_PERIOD_MISSING" || error.message === "PAYSLIP_PERIOD_INVALID") {
+        return NextResponse.json({ error: "La periode de fiche de paie est invalide." }, { status: 400 })
+      }
     }
 
     console.error("Error processing request action:", error)
@@ -367,7 +438,8 @@ export async function POST(
     try {
       await payslipService.generatePayslip(result.request.id)
     } catch (err) {
-      console.error("Payslip auto-generation failed (approval still succeeded):", err)
+      console.error("Payslip auto-generation failed after approval:", err)
+      return NextResponse.json({ error: "La fiche de paie n'a pas pu etre generee." }, { status: 500 })
     }
   }
 
@@ -382,7 +454,9 @@ export async function POST(
       result.generatedDocumentCreated ? "Document disponible" : "Mise a jour de votre demande",
       result.generatedDocumentCreated
         ? "Votre attestation de travail est disponible."
-        : employeeMsg,
+        : result.request.documentType === "FICHE_PAIE" && isFullyApproved
+          ? "Votre fiche de paie est disponible."
+          : employeeMsg,
     )
   }
 

@@ -146,7 +146,7 @@ async function initProducer() {
     createPartitioner: Partitioners.LegacyPartitioner,
   })
   await producer.connect()
-  console.log("Kafka producer connected")
+  console.info("Kafka producer connected")
 }
 
 // Initialize Kafka consumer
@@ -154,14 +154,14 @@ async function initConsumer() {
   consumer = kafka.consumer({ groupId: "chat-group" })
   await consumer.connect()
   await consumer.subscribe({ topic: "chat-messages", fromBeginning: false })
-  console.log("Kafka consumer connected and subscribed")
+  console.info("Kafka consumer connected and subscribed")
 
   await consumer.run({
     eachMessage: async ({ message, topic, partition }) => {
-      console.log(`📥 [Kafka Consumer] Received message from topic ${topic} partition ${partition}`)
+      console.info(`📥 [Kafka Consumer] Received message from topic ${topic} partition ${partition}`)
       try {
         const payload = JSON.parse(message.value?.toString() || "{}")
-        console.log(`📥 [Kafka Payload]:`, payload)
+        console.info(`📥 [Kafka Payload]:`, payload)
         const { senderId, conversationId, content, recipientId } = payload
 
         // Save message to PostgreSQL via Prisma
@@ -201,7 +201,7 @@ async function initConsumer() {
               read: false
             }
           })
-          console.log(`📢 Notification created for recipient ${recipientId}`)
+          console.info(`📢 Notification created for recipient ${recipientId}`)
         } catch (notifError) {
           console.error('Failed to create notification:', notifError)
         }
@@ -214,7 +214,7 @@ async function initConsumer() {
           })
         }
 
-        console.log(`Message saved and emitted: ${savedMessage.id}`)
+        console.info(`Message saved and emitted: ${savedMessage.id}`)
       } catch (error) {
         console.error("Error processing Kafka message:", error)
       }
@@ -299,9 +299,9 @@ async function startServer() {
 
   // Start the server
   server.listen(port, () => {
-    console.log(`> Ready on http://${hostname}:${port}`)
-    console.log(`> Socket.io server running`)
-    console.log(
+    console.info(`> Ready on http://${hostname}:${port}`)
+    console.info(`> Socket.io server running`)
+    console.info(
       kafkaEnabled
         ? "> Kafka producer and consumer initialized"
         : "> Kafka unavailable, continuing without Kafka-backed chat"
@@ -309,7 +309,7 @@ async function startServer() {
 
     // Warm up critical routes to eliminate cold start compilation delays
     if (dev) {
-      console.log(`> Warming up critical routes (/ , /login, /dashboard)...`)
+      console.info(`> Warming up critical routes (/ , /login, /dashboard)...`)
       const warmupRoutes = ['/', '/login', '/dashboard'];
       
       const warmup = async () => {
@@ -321,7 +321,7 @@ async function startServer() {
       };
 
       warmup().then(() => {
-        console.log(`> ✨ Core routes compiled and cached!`);
+        console.info(`> ✨ Core routes compiled and cached!`);
       });
     }
   })

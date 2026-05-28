@@ -27,6 +27,11 @@ const requestInclude = {
       generatedAt: true,
     },
   },
+  payslip: {
+    select: {
+      id: true,
+    },
+  },
   history: {
     orderBy: { createdAt: "asc" as const },
   },
@@ -34,6 +39,7 @@ const requestInclude = {
 
 const requestIncludeWithoutGeneratedDocument = {
   employee: requestInclude.employee,
+  payslip: requestInclude.payslip,
   history: requestInclude.history,
 }
 
@@ -219,6 +225,7 @@ export async function POST(req: Request) {
       employeeId: user.id,
       managerId: employee.managerId,
       comment: body.comment,
+      reason: body.reason ?? null,
       startDate,
       endDate,
       documentType: body.type === "DOCUMENT" ? body.documentType : null,
