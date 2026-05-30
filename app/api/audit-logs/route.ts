@@ -1,47 +1,19 @@
-import { prisma } from "@/lib/prisma"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { NextResponse } from "next/server"
+import { NextResponse } from "next/server";
+import { handleApiError } from "@/lib/utils/api-response";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { auditService } from "@/lib/services/server/audit.service";
 
 export async function GET(req: Request) {
-  const user = await getCurrentUser()
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  try {
+    await requireAuth(req, ["RH"]);
+    const url = new URL(req.url);
+    const page = Number.parseInt(url.searchParams.get("page") || "1", 10);
+    const limit = Number.parseInt(url.searchParams.get("limit") || "20", 10);
+    const entity = url.searchParams.get("entity");
+    const search = url.searchParams.get("search");
+    const data = await auditService.getLogs({ page, limit, entity, search });
+    return NextResponse.json(data);
+  } catch (error) {
+    return handleApiError(error, "Failed to fetch audit logs");
   }
-
-  if (user.role !== "RH") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
-
-  const url = new URL(req.url)
-  const page = parseInt(url.searchParams.get("page") || "1")
-  const limit = parseInt(url.searchParams.get("limit") || "20")
-  const entity = url.searchParams.get("entity")
-  const search = url.searchParams.get("search")
-
-  const where: Record<string, unknown> = {}
-
-  if (entity) {
-    where.entity = entity
-  }
-
-  if (search) {
-    where.actorName = { contains: search, mode: "insensitive" }
-  }
-
-  const [logs, total] = await Promise.all([
-    prisma.auditLog.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-    prisma.auditLog.count({ where }),
-  ])
-
-  return NextResponse.json({
-    logs,
-    total,
-    page,
-    totalPages: Math.ceil(total / limit),
-  })
 }

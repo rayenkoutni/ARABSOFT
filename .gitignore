@@ -19,6 +19,7 @@ dist
 *.pem
 tmp/
 storage/generated-documents/
+public/signatures/
 
 # debug
 npm-debug.log*
@@ -57,5 +58,8 @@ docker-compose.override.yml
 # build logs
 build_output*.txt
 tsc_output*.txt
+.tmp-*
+auth_debug.log
+dev_audit.log
 package-lock.json
 yarn.lock

@@ -117,6 +117,29 @@ async function removeStaleLock() {
   }
 }
 
+async function patchNextEsmSpecifiers(filePath) {
+  const replacements = new Map([
+    ['"next/server"', '"next/server.js"'],
+    ["'next/server'", "'next/server.js'"],
+    ['"next/headers"', '"next/headers.js"'],
+    ["'next/headers'", "'next/headers.js'"],
+  ])
+
+  let compiledSource = await fs.readFile(filePath, "utf8")
+  let hasChanges = false
+
+  for (const [from, to] of replacements) {
+    if (compiledSource.includes(from)) {
+      compiledSource = compiledSource.split(from).join(to)
+      hasChanges = true
+    }
+  }
+
+  if (hasChanges) {
+    await fs.writeFile(filePath, compiledSource, "utf8")
+  }
+}
+
 async function main() {
   await ensurePortIsAvailable()
   await removeStaleLock()
@@ -151,6 +174,7 @@ async function main() {
     },
     logLevel: "warning",
   })
+  await patchNextEsmSpecifiers(compiledFile)
 
   const child = spawn(process.execPath, [compiledFile], {
     cwd: projectRoot,

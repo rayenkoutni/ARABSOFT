@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { useAuth } from '@/lib'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,11 +8,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Send, MessageSquare, Users, Plus, Search } from 'lucide-react'
 import { BrandedLoading } from '@/components/ui/spinner'
 import { MessageNotificationPopup } from '@/components/message-notification-popup'
 import { cn } from '@/lib/utils'
 import { usePathname } from 'next/navigation'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { useToast } from '@/hooks/use-toast'
 
 interface Participant {
   id: string
@@ -67,7 +69,8 @@ interface Message {
 }
 
 export default function ChatPage() {
-  const { user, socket: globalSocket } = useAuth()
+  const { user, socket: globalSocket } = useCurrentUser()
+  const { toast } = useToast()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -99,9 +102,6 @@ export default function ChatPage() {
 
   // Set isClient to true after hydration
   useEffect(() => {
-    if (socket) {
-      console.info('✅ ChatPage using socket:', socket.id)
-    }
     setIsClient(true)
     // Initialize audio context for sound notifications
     if (typeof window !== 'undefined') {
@@ -139,8 +139,11 @@ export default function ChatPage() {
           const data = await res.json()
           setEmployees(data)
         }
-      } catch (error) {
-        console.error('Error fetching employees:', error)
+      } catch {
+        toast({
+          title: "Impossible de charger les collaborateurs",
+          variant: 'destructive',
+        })
       } finally {
         setIsLoadingEmployees(false)
       }
@@ -201,12 +204,16 @@ export default function ChatPage() {
         // Handle error response
         const errorData = await res.json().catch(() => ({}))
         const errorMessage = errorData.error || 'Failed to create conversation'
-        console.error('Error creating conversation:', errorMessage)
-        alert(`Erreur: ${errorMessage}`)
+        toast({
+          title: errorMessage,
+          variant: 'destructive',
+        })
       }
-    } catch (error) {
-      console.error('Error creating conversation:', error)
-      alert('Erreur lors de la création de la conversation')
+    } catch {
+      toast({
+        title: 'Erreur lors de la creation de la conversation',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -301,8 +308,11 @@ export default function ChatPage() {
             })
           })
         }
-      } catch (error) {
-        console.error('Error fetching conversations:', error)
+      } catch {
+        toast({
+          title: 'Impossible de charger les conversations',
+          variant: 'destructive',
+        })
       } finally {
         setIsLoadingConversations(false)
       }
@@ -332,8 +342,11 @@ export default function ChatPage() {
           
           scrollToBottom()
         }
-      } catch (error) {
-        console.error('Error fetching messages:', error)
+      } catch {
+        toast({
+          title: 'Impossible de charger les messages',
+          variant: 'destructive',
+        })
       } finally {
         setIsLoadingMessages(false)
       }
@@ -350,25 +363,11 @@ export default function ChatPage() {
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !socket || !user) {
-      console.warn('🚫 Send blocked:', { 
-        hasMessage: !!newMessage.trim(), 
-        hasConv: !!selectedConversation, 
-        hasSocket: !!socket, 
-        hasUser: !!user 
-      })
       return
     }
 
     const recipient = selectedConversation.participants.find(p => p.id !== user.id)
     if (!recipient) return
-
-    console.info('📤 Emitting send_message:', {
-      conversationId: selectedConversation.id,
-      content: newMessage.trim(),
-      recipientId: recipient.id,
-      socketConnected: socket.connected,
-      socketId: socket.id
-    })
 
     socket.emit('send_message', {
       conversationId: selectedConversation.id,
@@ -412,8 +411,8 @@ export default function ChatPage() {
         const pictures = JSON.parse(profilePictures)
         return pictures[userId] || null
       }
-    } catch (error) {
-      console.error('Error loading profile picture:', error)
+    } catch {
+      return null
     }
     return null
   }
@@ -432,8 +431,8 @@ export default function ChatPage() {
       }
       
       localStorage.setItem('user_profile_pictures', JSON.stringify(pictures))
-    } catch (error) {
-      console.error('Error saving profile picture:', error)
+    } catch {
+      // Ignore local cache write failures and continue with server data.
     }
   }
 
@@ -457,8 +456,8 @@ export default function ChatPage() {
       
       oscillator.start(ctx.currentTime)
       oscillator.stop(ctx.currentTime + 0.2)
-    } catch (error) {
-      console.error('Error playing notification sound:', error)
+    } catch {
+      // Audio is optional during chat notifications.
     }
   }
 
@@ -542,9 +541,12 @@ export default function ChatPage() {
               <BrandedLoading />
             </div>
           ) : conversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-center p-4">
-              <MessageSquare className="h-8 w-8 mb-2 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
-              <p style={{ color: 'var(--color-text-muted)' }}>Aucune conversation</p>
+            <div className="p-4">
+              <EmptyState
+                icon={MessageSquare}
+                message="Aucune conversation"
+                description="Demarrez une nouvelle discussion pour voir votre boite de reception ici."
+              />
             </div>
           ) : (
             <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
@@ -564,8 +566,11 @@ export default function ChatPage() {
                             : conv
                         ))
                         window.dispatchEvent(new Event('refreshNotifications'))
-                      } catch (error) {
-                        console.error('Error marking messages as read:', error)
+                      } catch {
+                        toast({
+                          title: 'Impossible de marquer les messages comme lus',
+                          variant: 'destructive',
+                        })
                       }
                     }
                   }}
@@ -682,11 +687,12 @@ export default function ChatPage() {
                   <BrandedLoading />
                 </div>
               ) : messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <MessageSquare className="h-12 w-12 mb-4 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
-                  <p style={{ color: 'var(--color-text-muted)' }}>Aucun message dans cette conversation</p>
-                  <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>Envoyez le premier message !</p>
-                </div>
+                <EmptyState
+                  icon={MessageSquare}
+                  message="Aucun message dans cette conversation"
+                  description="Envoyez le premier message pour lancer l'echange."
+                  className="mx-auto my-12 max-w-xl"
+                />
               ) : (
                 <div className="flex flex-col min-h-full justify-end">
                   <div className="space-y-0.5">
@@ -934,7 +940,7 @@ export default function ChatPage() {
                             "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0",
                             selectedEmployeeIds.includes(employee.id)
                               ? 'border-transparent'
-                              : 'border-gray-300'
+                              : 'border-gray-300 dark:border-slate-600'
                           )}
                           style={{
                             backgroundColor: selectedEmployeeIds.includes(employee.id)

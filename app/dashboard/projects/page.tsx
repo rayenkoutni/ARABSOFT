@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAuth } from '@/lib'
+import { PROJECT_STATUS, ROLE, TASK_STATUS } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -16,6 +18,7 @@ import { Plus, Calendar, Users, FolderKanban, ArrowRight, AlertCircle } from 'lu
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Link from 'next/link'
+import { useToast } from '@/hooks/use-toast'
 
 interface Project {
   id: string
@@ -49,15 +52,15 @@ interface Employee {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  EN_ATTENTE: 'En attente',
-  EN_COURS: 'En cours',
+  [PROJECT_STATUS.PENDING]: 'En attente',
+  [PROJECT_STATUS.IN_PROGRESS]: 'En cours',
   TERMINE: 'Terminé'
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  EN_ATTENTE: 'bg-yellow-500',
-  EN_COURS: 'bg-blue-500',
-  TERMINE: 'bg-green-500'
+  [PROJECT_STATUS.PENDING]: 'bg-yellow-500',
+  [PROJECT_STATUS.IN_PROGRESS]: 'bg-blue-500',
+  [PROJECT_STATUS.COMPLETED]: 'bg-green-500'
 }
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -73,7 +76,8 @@ const PRIORITY_COLORS: Record<string, string> = {
 }
 
 export default function ProjectsPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
+  const { toast } = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
@@ -90,7 +94,7 @@ export default function ProjectsPage() {
     teamMemberIds: [] as string[]
   })
 
-  const canCreateProject = user?.role === 'CHEF'
+  const canCreateProject = user?.role === ROLE.MANAGER
 
   useEffect(() => {
     fetchProjects()
@@ -106,8 +110,11 @@ export default function ProjectsPage() {
         const data = await res.json()
         setProjects(data)
       }
-    } catch (err) {
-      console.error('Error fetching projects:', err)
+    } catch {
+      toast({
+        title: 'Impossible de charger les projets',
+        variant: 'destructive',
+      })
     } finally {
       setLoading(false)
     }
@@ -115,15 +122,18 @@ export default function ProjectsPage() {
 
   const fetchEmployees = async () => {
     try {
-      // For CHEF, use the dedicated team endpoint to get only their team members
-      const endpoint = user?.role === 'CHEF' ? '/api/users/team' : '/api/employees'
+      // For manager, use the dedicated team endpoint to get only their team members
+      const endpoint = user?.role === ROLE.MANAGER ? '/api/users/team' : '/api/employees'
       const res = await fetch(endpoint)
       if (res.ok) {
         const data = await res.json()
         setEmployees(data)
       }
-    } catch (err) {
-      console.error('Error fetching employees:', err)
+    } catch {
+      toast({
+        title: "Impossible de charger l'equipe",
+        variant: 'destructive',
+      })
     }
   }
 
@@ -150,30 +160,32 @@ export default function ProjectsPage() {
           teamMemberIds: [] 
         })
       } else {
-        try {
-          const error = await res.json()
-          alert(error.error || 'Erreur lors de la création')
-        } catch {
-          alert('Erreur lors de la création')
-        }
+        const error = await res.json().catch(() => ({}))
+        toast({
+          title: error.error || 'Erreur lors de la creation',
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error creating project:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la creation',
+        variant: 'destructive',
+      })
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  // Filter team members for CHEF - only show their team
-  const availableEmployees = user?.role === 'CHEF' 
+  // Filter team members For manager - only show their team
+  const availableEmployees = user?.role === ROLE.MANAGER 
     ? employees.filter(e => e.managerId === user.id)
     : employees
 
   const getTaskCount = (project: Project) => project.tasks.length
-  const getCompletedTaskCount = (project: Project) => project.tasks.filter(t => t.status === 'DONE').length
+  const getCompletedTaskCount = (project: Project) => project.tasks.filter(t => t.status === TASK_STATUS.DONE).length
   const getProgress = (project: Project) => {
     if (project.tasks.length === 0) return project.progress || 0
-    const completed = project.tasks.filter(t => t.status === 'DONE').length
+    const completed = project.tasks.filter(t => t.status === TASK_STATUS.DONE).length
     return Math.round((completed / project.tasks.length) * 100)
   }
 
@@ -200,7 +212,7 @@ export default function ProjectsPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Projets</h1>
           <p className="text-muted-foreground">Gestion des projets et des tâches</p>
-          {user?.role === 'RH' && (
+          {user?.role === ROLE.HR && (
             <Badge variant="outline" className="mt-2 text-blue-600 border-blue-300">
               Observateur
             </Badge>
@@ -275,7 +287,7 @@ export default function ProjectsPage() {
                 </div>
                 {availableEmployees.length > 0 && (
                   <div className="space-y-2">
-                    <Label>Membres de l'équipe {user?.role === 'CHEF' && '(votre équipe)'}</Label>
+                    <Label>Membres de l'équipe {user?.role === ROLE.MANAGER && '(votre équipe)'}</Label>
                     <div className="flex flex-wrap gap-2">
                       {availableEmployees.map((emp) => (
                         <Badge
@@ -310,10 +322,11 @@ export default function ProjectsPage() {
       </div>
 
       {projects.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <FolderKanban className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>Aucun projet trouvé</p>
-        </div>
+        <EmptyState
+          icon={FolderKanban}
+          message="Aucun projet trouve"
+          description="Creez un projet ou attendez qu'une equipe en publie un."
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map((project) => {
@@ -404,3 +417,4 @@ export default function ProjectsPage() {
     </div>
   )
 }
+

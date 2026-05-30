@@ -1,35 +1,18 @@
-import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { prisma } from "@/lib/prisma"
+import { NextResponse } from "next/server";
+import { handleApiError } from "@/lib/utils/api-response";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { employeesService } from "@/lib/services/server/employees.service";
 
 export async function GET(
   req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: "Non autorisé" }, { status: 401 })
-
-  const { id: employeeId } = await params
-
-  // Permission check
-  if (user.role === "COLLABORATEUR" && user.id !== employeeId) {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+  try {
+    const user = await requireAuth(req);
+    const { id } = await params;
+    const bonuses = await employeesService.getEmployeeBonuses(user, id);
+    return NextResponse.json(bonuses);
+  } catch (error) {
+    return handleApiError(error, "Erreur lors du chargement des bonus");
   }
-
-  if (user.role === "CHEF") {
-    const employee = await prisma.employee.findUnique({
-      where: { id: employeeId },
-      select: { managerId: true },
-    })
-    if (employee?.managerId !== user.id) {
-      return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
-    }
-  }
-
-  const bonuses = await prisma.bonus.findMany({
-    where: { employeeId },
-    orderBy: { createdAt: "desc" },
-  })
-
-  return NextResponse.json(bonuses)
 }

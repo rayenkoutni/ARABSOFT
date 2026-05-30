@@ -7,7 +7,6 @@
 
 export * from './common.utils';
 export * from './format.utils';
-export * from './status.utils';
 export * from './avatar.utils';
 export * from '../constants';
 

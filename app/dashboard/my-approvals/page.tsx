@@ -19,8 +19,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { useAuth } from '@/lib'
+import { REQUEST_STATUS, ROLE } from '@/lib/constants'
 import { canUserExamineRequest } from '@/lib/request-actions'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { parseRequestContent } from '@/lib/request-content'
 import { matchesRequestDateRange } from '@/lib/request-date-filter'
 import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
@@ -29,7 +30,7 @@ import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 
 function MyApprovalsContent() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const searchParams = useSearchParams()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -51,8 +52,7 @@ function MyApprovalsContent() {
       setSelectedRequestError('')
       setSelectedRequest(null)
       setSelectedRequest(await requestService.getRequestById(requestId))
-    } catch (error) {
-      console.error('Failed to load request details:', error)
+    } catch {
       setSelectedRequest(null)
       setSelectedRequestError("Impossible de charger les details de la demande.")
     } finally {
@@ -84,7 +84,7 @@ function MyApprovalsContent() {
     loadRequests()
   }, [user, searchParams])
 
-  if (!user || user.role !== 'CHEF') {
+  if (!user || user.role !== ROLE.MANAGER) {
     return (
       <div className="py-12 text-center">
         <p className="text-muted-foreground">Cette page est reservee aux chefs</p>
@@ -112,8 +112,7 @@ function MyApprovalsContent() {
 
       try {
         setSelectedRequest(await requestService.getRequestById(selectedRequest.id))
-      } catch (refreshError) {
-        console.error('Failed to refresh request after approval error:', refreshError)
+      } catch {
       }
     } finally {
       setIsSubmitting(false)
@@ -142,7 +141,7 @@ function MyApprovalsContent() {
   }
 
   const selectedRequestInfo = selectedRequest ? parseRequestContent(selectedRequest) : null
-  const pendingRequests = requests.filter((request) => request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH')
+  const pendingRequests = requests.filter((request) => request.status === REQUEST_STATUS.PENDING_MANAGER || request.status === REQUEST_STATUS.PENDING_HR)
   const normalizedSearchTerm = normalizeSearchText(searchTerm)
   const searchedRequests = pendingRequests.filter((request) => {
     const searchable = normalizeSearchText(buildRequestCardSearchText(request, user.id))
@@ -162,16 +161,16 @@ function MyApprovalsContent() {
     return true
   })
 
-  const pendingChefCount = filteredByMetaRequests.filter((request) => request.status === 'EN_ATTENTE_CHEF').length
-  const pendingRHCount = filteredByMetaRequests.filter((request) => request.status === 'EN_ATTENTE_RH').length
+  const pendingChefCount = filteredByMetaRequests.filter((request) => request.status === REQUEST_STATUS.PENDING_MANAGER).length
+  const pendingRHCount = filteredByMetaRequests.filter((request) => request.status === REQUEST_STATUS.PENDING_HR).length
 
   const visibleRequests = filteredByMetaRequests.filter((request) => {
     if (selectedStatus === 'pending-chef') {
-      return request.status === 'EN_ATTENTE_CHEF'
+      return request.status === REQUEST_STATUS.PENDING_MANAGER
     }
 
     if (selectedStatus === 'pending-rh') {
-      return request.status === 'EN_ATTENTE_RH'
+      return request.status === REQUEST_STATUS.PENDING_HR
     }
 
     return true
@@ -204,7 +203,7 @@ function MyApprovalsContent() {
         <TabsList className="h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
           <TabsTrigger className="h-9 flex-none px-4" value="all">Tous ({filteredByMetaRequests.length})</TabsTrigger>
           <TabsTrigger className="h-9 flex-none px-4" value="pending-chef">En attente Chef ({pendingChefCount})</TabsTrigger>
-          <TabsTrigger className="h-9 flex-none px-4" value="pending-rh">En attente RH ({pendingRHCount})</TabsTrigger>
+          <TabsTrigger className="h-9 flex-none px-4" value="pending-rh">En attente ressources humaines ({pendingRHCount})</TabsTrigger>
         </TabsList>
       </Tabs>
 

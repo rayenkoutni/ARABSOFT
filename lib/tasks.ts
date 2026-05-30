@@ -67,6 +67,12 @@ export const taskWithRelationsInclude = {
       name: true,
     },
   },
+  project: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
   requiredSkills: {
     orderBy: [
       { minimumLevel: "desc" as const },

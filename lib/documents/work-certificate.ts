@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import { getRhSignatureDataUrl } from '@/lib/documents/signature'
+import { getRhSignatureForDocument } from '@/lib/utils/get-rh-signature'
 
 export interface GenerateWorkCertificatePdfInput {
   employeeName: string
@@ -17,6 +17,7 @@ export interface GenerateWorkCertificatePdfInput {
   documentReference: string
   validatedByName?: string | null
   validatedByRole?: string | null
+  rhSignatureUserId?: string | null
 }
 
 const LOGO_PATH = path.join(process.cwd(), 'public', 'logo.png')
@@ -72,7 +73,7 @@ async function fileToDataUrl(filePath: string, mimeType: string) {
 
 async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) {
   const logoDataUrl = await fileToDataUrl(LOGO_PATH, 'image/png')
-  const signatureDataUrl = await getRhSignatureDataUrl()
+  const signature = await getRhSignatureForDocument({ userId: input.rhSignatureUserId })
   const employeeName = normalizeLabel(input.employeeName)
 
   if (!employeeName) {
@@ -174,10 +175,19 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
 
       .signature-image {
         width: 58mm;
-        height: auto;
+        height: 24mm;
         display: block;
-        margin: 0 auto -2mm;
+        margin: 2mm auto 0;
         object-fit: contain;
+      }
+
+      .signature-placeholder {
+        width: 58mm;
+        margin: 0 auto 1mm;
+        padding: 12mm 0 8mm;
+        color: #9ca3af;
+        font-size: 11pt;
+        font-style: italic;
       }
 
       .signature-title {
@@ -236,7 +246,9 @@ async function buildWorkCertificateHtml(input: GenerateWorkCertificatePdfInput) 
 
         <div class="signature-area">
           <div class="signature-title">Visa RH</div>
-          <img class="signature-image" src="${signatureDataUrl}" alt="Signature RH" />
+          ${signature.url
+            ? `<img class="signature-image" src="${signature.url}" alt="Signature RH" />`
+            : `<div class="signature-placeholder">${escapeHtml(signature.placeholder)}</div>`}
           <div class="signature-line"></div>
           <p class="signature-name">${escapeHtml(validatedByName)}</p>
           <p class="signature-role">${escapeHtml(validatedByRole)}</p>
@@ -263,6 +275,10 @@ export async function generateWorkCertificatePdf(
     const html = await buildWorkCertificateHtml(input)
 
     await page.setContent(html, { waitUntil: 'load' })
+    await page.waitForFunction(() => {
+      const image = document.querySelector('.signature-image') as HTMLImageElement | null
+      return !image || image.complete
+    })
 
     const pdf = await page.pdf({
       format: 'A4',

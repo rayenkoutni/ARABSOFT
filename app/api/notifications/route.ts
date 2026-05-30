@@ -1,34 +1,24 @@
-import { prisma } from "@/lib/prisma"
-import { getCurrentUser } from "@/lib/getCurrentUser"
 import { NextResponse } from "next/server"
+import { handleApiError } from "@/lib/api-response"
+import { serverAuthService } from "@/lib/services/server/auth.service"
+import { notificationServerService } from "@/lib/services/server/notification.service"
 
 export async function GET() {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
-  const notifications = await prisma.notification.findMany({
-    where: { 
-      employeeId: user.id,
-      NOT: { title: "Nouveau message" }
-    },
-    orderBy: { createdAt: "desc" },
-    take: 50 // reasonable limit for UI
-  })
-
-  return NextResponse.json(notifications)
+  try {
+    const user = await serverAuthService.requireAuth()
+    const notifications = await notificationServerService.getUserNotifications(user.id)
+    return NextResponse.json(notifications)
+  } catch (error) {
+    return handleApiError(error, "Failed to fetch notifications")
+  }
 }
 
 export async function DELETE() {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
   try {
-    await prisma.notification.deleteMany({
-      where: { employeeId: user.id }
-    })
-
-    return NextResponse.json({ success: true })
+    const user = await serverAuthService.requireAuth()
+    const result = await notificationServerService.clearUserNotifications(user.id)
+    return NextResponse.json(result)
   } catch (error) {
-    return NextResponse.json({ error: "Failed to clear notifications" }, { status: 500 })
+    return handleApiError(error, "Failed to clear notifications")
   }
 }

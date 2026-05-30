@@ -1,11 +1,21 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useAuth } from '@/lib'
+import { ROLE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Table,
   TableBody,
@@ -14,7 +24,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { Search, ChevronLeft, ChevronRight, Download } from 'lucide-react'
 
 interface AuditLog {
   id: string
@@ -61,9 +72,13 @@ const entityTypes = [
 ]
 
 export default function AuditPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
+  const { toast } = useToast()
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isExporting, setIsExporting] = useState(false)
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false)
+  const [exportMode, setExportMode] = useState<'all' | 'filtered'>('filtered')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedEntity, setSelectedEntity] = useState<string>('all')
   const [page, setPage] = useState(1)
@@ -102,7 +117,58 @@ export default function AuditPage() {
     setPage(1)
   }, [searchTerm, selectedEntity])
 
-  if (!user || user.role !== 'RH') {
+  const handleExport = useCallback(async () => {
+    try {
+      setIsExporting(true)
+
+      const params = new URLSearchParams({
+        mode: exportMode,
+      })
+
+      if (exportMode === 'filtered') {
+        if (searchTerm) params.append('search', searchTerm)
+        if (selectedEntity !== 'all') params.append('entity', selectedEntity)
+      }
+
+      const res = await fetch(`/api/audit-logs/export?${params.toString()}`)
+
+      if (!res.ok) {
+        throw new Error('Export failed')
+      }
+
+      const blob = await res.blob()
+      const objectUrl = window.URL.createObjectURL(blob)
+      const disposition = res.headers.get('content-disposition')
+      const filename = disposition?.match(/filename="([^"]+)"/)?.[1] ?? 'journal-audit.xls'
+      const link = document.createElement('a')
+
+      link.href = objectUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(objectUrl)
+
+      setIsExportDialogOpen(false)
+      toast({
+        title: 'Export Excel genere',
+        description:
+          exportMode === 'all'
+            ? 'Le journal complet a ete exporte avec succes.'
+            : 'Le journal filtre a ete exporte avec succes.',
+      })
+    } catch {
+      toast({
+        title: "Echec de l'export",
+        description: "Le fichier Excel n'a pas pu etre genere.",
+        variant: 'destructive',
+      })
+    } finally {
+      setIsExporting(false)
+    }
+  }, [exportMode, searchTerm, selectedEntity, toast])
+
+  if (!user || user.role !== ROLE.HR) {
     return (
       <div className="py-12 text-center">
         <p className="text-muted-foreground">Access denied</p>
@@ -142,6 +208,14 @@ export default function AuditPage() {
             ))}
           </SelectContent>
         </Select>
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          onClick={() => setIsExportDialogOpen(true)}
+        >
+          <Download className="h-4 w-4" />
+          Exporter Excel
+        </Button>
       </div>
 
       <div className="rounded-md border">
@@ -213,6 +287,57 @@ export default function AuditPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={isExportDialogOpen} onOpenChange={setIsExportDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Exporter le journal d&apos;audit</DialogTitle>
+            <DialogDescription>
+              Choisissez si vous voulez exporter tout le journal ou seulement les donnees correspondant aux filtres actifs.
+            </DialogDescription>
+          </DialogHeader>
+
+          <RadioGroup
+            value={exportMode}
+            onValueChange={(value) => setExportMode(value as 'all' | 'filtered')}
+            className="gap-4"
+          >
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-4">
+              <RadioGroupItem value="filtered" id="export-filtered" className="mt-1" />
+              <div className="space-y-1">
+                <p className="font-medium">Filtres actifs</p>
+                <p className="text-sm text-muted-foreground">
+                  Exporte uniquement les lignes visibles selon la recherche et le type selectionne.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-4">
+              <RadioGroupItem value="all" id="export-all" className="mt-1" />
+              <div className="space-y-1">
+                <p className="font-medium">Tout le journal</p>
+                <p className="text-sm text-muted-foreground">
+                  Ignore les filtres actuels et exporte l&apos;ensemble des entrees.
+                </p>
+              </div>
+            </label>
+          </RadioGroup>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsExportDialogOpen(false)}
+              disabled={isExporting}
+            >
+              Annuler
+            </Button>
+            <Button type="button" onClick={handleExport} disabled={isExporting}>
+              {isExporting ? 'Generation...' : 'Generer le fichier'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

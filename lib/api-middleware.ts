@@ -1,44 +1,33 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/getCurrentUser";
 import { prisma } from "@/lib/prisma";
 import { ROLE, HTTP_STATUS, ERROR_MESSAGES } from "./constants";
+import { ApiError, errorResponse as buildErrorResponse } from "./api-response";
+import { serverAuthService } from "@/lib/services/server/auth.service";
 
 /**
  * Authentication middleware for API routes
  * Validates user is authenticated and returns user object
  */
-export async function requireAuth() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return {
-      user: null,
-      response: NextResponse.json(
-        { error: ERROR_MESSAGES.UNAUTHORIZED },
-        { status: HTTP_STATUS.UNAUTHORIZED }
-      ),
-    };
+export async function requireAuth(request?: Request, allowedRoles?: Array<(typeof ROLE)[keyof typeof ROLE]>) {
+  try {
+    const user = await serverAuthService.requireAuth(request, allowedRoles);
+    return { user, response: null };
+  } catch (error) {
+    const status =
+      error instanceof ApiError ? error.status : allowedRoles ? HTTP_STATUS.FORBIDDEN : HTTP_STATUS.UNAUTHORIZED;
+    const message =
+      status === HTTP_STATUS.FORBIDDEN ? ERROR_MESSAGES.FORBIDDEN : ERROR_MESSAGES.UNAUTHORIZED;
+    return { user: null, response: errorResponse(message, status) };
   }
-  return { user, response: null };
 }
 
 /**
  * Authorization middleware that requires specific roles
  */
 export async function requireRoles(allowedRoles: string[]) {
-  const auth = await requireAuth();
+  const auth = await requireAuth(undefined, allowedRoles as Array<(typeof ROLE)[keyof typeof ROLE]>);
   if (auth.response) return auth;
-
-  if (!allowedRoles.includes(auth.user.role)) {
-    return {
-      user: auth.user,
-      response: NextResponse.json(
-        { error: ERROR_MESSAGES.FORBIDDEN },
-        { status: HTTP_STATUS.FORBIDDEN }
-      ),
-    };
-  }
-
-  return { user: auth.user, response: null };
+  return auth;
 }
 
 /**
@@ -113,12 +102,12 @@ export async function getManagerTeamIds(managerId: string) {
  * Standard error response handler
  */
 export function errorResponse(message: string, status: number = HTTP_STATUS.BAD_REQUEST) {
-  return NextResponse.json({ error: message }, { status });
+  return buildErrorResponse(message, status);
 }
 
 /**
  * Standard success response handler
  */
-export function successResponse(data: any, status: number = HTTP_STATUS.OK) {
+export function successResponse(data: unknown, status: number = HTTP_STATUS.OK) {
   return NextResponse.json(data, { status });
 }

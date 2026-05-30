@@ -20,9 +20,10 @@ import {
   getPayslipPeriodLabel,
   parseBonusDetails,
 } from "@/lib/payslip"
-import { getRhSignatureDataUrl } from "@/lib/documents/signature"
+import { getRhSignatureForDocument } from "@/lib/utils/get-rh-signature"
 import { prisma } from "@/lib/prisma"
 import { PayslipPeriodType, Role } from "@prisma/client"
+import { AppError } from "@/lib/errors"
 
 const LOGO_PATH = path.join(process.cwd(), "public", "logo.png")
 
@@ -42,6 +43,7 @@ export interface PayslipPdfPayload {
   bonusTotal: number
   netTotal: number
   gradeLabel: string
+  rhSignatureUserId: string | null
   employee: {
     id: string
     name: string
@@ -99,7 +101,7 @@ export async function getAuthorizedPayslipPdfPayload(
     (user.role === Role.CHEF && payslip.employee.managerId === user.id)
 
   if (!canAccess) {
-    throw new Error("FORBIDDEN")
+    throw new AppError("FORBIDDEN", 403)
   }
 
   const periodBounds = payslip.periodType === PayslipPeriodType.MONTHLY
@@ -108,6 +110,16 @@ export async function getAuthorizedPayslipPdfPayload(
   const gradeLabel = payslip.employee.salaryGrade
     ? `${payslip.employee.salaryGrade.role} - Niveau ${payslip.employee.salaryGrade.level}`
     : payslip.employee.role
+  const rhApproval = payslip.requestId
+    ? await prisma.requestHistory.findFirst({
+      where: {
+        requestId: payslip.requestId,
+        action: "APPROVE",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { actorId: true },
+    })
+    : null
 
   return {
     id: payslip.id,
@@ -125,6 +137,7 @@ export async function getAuthorizedPayslipPdfPayload(
     bonusTotal: payslip.bonusTotal,
     netTotal: payslip.resolvedSalary + payslip.bonusTotal,
     gradeLabel,
+    rhSignatureUserId: rhApproval?.actorId ?? null,
     employee: payslip.employee,
     bonusDetails: parseBonusDetails(payslip.bonusDetails),
   }
@@ -299,6 +312,15 @@ const styles = StyleSheet.create({
     height: 52,
     objectFit: "contain",
   },
+  signaturePlaceholder: {
+    width: 150,
+    height: 52,
+    color: "#9ca3af",
+    fontSize: 10,
+    fontStyle: "italic",
+    textAlign: "center",
+    paddingTop: 18,
+  },
   footerText: {
     fontSize: 9,
     color: "#6b7280",
@@ -363,7 +385,7 @@ function buildTableRows(payload: PayslipPdfPayload) {
 
 export async function generatePayslipPdf(payload: PayslipPdfPayload) {
   const logoDataUrl = await fileToDataUrl(LOGO_PATH, "image/png")
-  const signatureDataUrl = await getRhSignatureDataUrl()
+  const signature = await getRhSignatureForDocument({ userId: payload.rhSignatureUserId })
   const tableRows = buildTableRows(payload)
 
   return renderToBuffer(
@@ -443,7 +465,11 @@ export async function generatePayslipPdf(payload: PayslipPdfPayload) {
 
         <View style={styles.footer}>
           <View style={styles.signatureWrap}>
-            <Image src={signatureDataUrl} style={styles.signatureImage} />
+            {signature.url ? (
+              <Image src={signature.url} style={styles.signatureImage} />
+            ) : (
+              <Text style={styles.signaturePlaceholder}>{signature.placeholder}</Text>
+            )}
           </View>
           <Text style={styles.footerText}>Document généré automatiquement par le système RH ArabSoft</Text>
           <Text style={styles.footerText}>{`Génération: ${formatFrenchDate(payload.generatedAt)}`}</Text>

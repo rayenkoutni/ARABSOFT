@@ -14,7 +14,7 @@ const RESEND_COOLDOWN = 60
 export interface OTPVerificationModalProps {
   userId: string
   maskedEmail: string
-  onVerify: (code: string) => Promise<boolean>
+  onVerify: (code: string, rememberDevice: boolean) => Promise<boolean>
   onSendCode: () => Promise<void>
   onCancel: () => void
   onVerified: () => void
@@ -135,7 +135,7 @@ export function OTPVerificationModal({
     setIsVerifying(true)
     const codeStr = code.join('')
     try {
-      const valid = await onVerify(codeStr)
+      const valid = await onVerify(codeStr, rememberDevice)
       if (valid) {
         saveTrustedDeviceToken(userId, rememberDevice)
         onVerified()

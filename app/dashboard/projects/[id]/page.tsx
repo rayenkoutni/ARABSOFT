@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { useAuth } from '@/lib'
+import { PROJECT_STATUS, ROLE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -42,6 +44,7 @@ import {
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
+import { useToast } from '@/hooks/use-toast'
 
 interface Task {
   id: string
@@ -114,6 +117,30 @@ interface GeneratedTask {
   assignedUserId: string
   dueDate: string
   priority: string
+  comment?: string | null
+}
+
+interface AITeamMember {
+  id: string
+  name: string
+  jobTitle?: string
+  status?: 'active' | 'en_conge'
+  skills?: Array<{ name: string; level: number }>
+}
+
+const AI_PRIORITY_STYLES: Record<string, string> = {
+  HIGH: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300',
+  MEDIUM: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
+  LOW: 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
+}
+
+function getAiPriorityLabel(priority: string) {
+  return PRIORITIES.find((item) => item.id === priority)?.label || priority
+}
+
+function formatGeneratedDueDate(value: string | null | undefined) {
+  if (!value) return ''
+  return value.includes('T') ? value.split('T')[0] : value
 }
 
 // 4-column Kanban: TODO, IN_PROGRESS, IN_REVIEW, DONE
@@ -131,7 +158,7 @@ const PRIORITIES = [
 ]
 
 const STATUS_LABELS: Record<string, string> = {
-  EN_ATTENTE: 'En attente',
+  [PROJECT_STATUS.PENDING]: 'En attente',
   EN_COURS: 'En cours',
   TERMINE: 'Terminé'
 }
@@ -139,7 +166,8 @@ const STATUS_LABELS: Record<string, string> = {
 export default function ProjectDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
+  const { toast } = useToast()
   const projectId = params.id as string
 
   const [project, setProject] = useState<Project | null>(null)
@@ -156,6 +184,8 @@ export default function ProjectDetailPage() {
   const [generatedTasks, setGeneratedTasks] = useState<GeneratedTask[]>([])
   const [isAIPreviewOpen, setIsAIPreviewOpen] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [aiWarning, setAiWarning] = useState<string | null>(null)
+  const [aiTeamMembers, setAiTeamMembers] = useState<AITeamMember[]>([])
 
   // Review state
   const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false)
@@ -164,7 +194,7 @@ export default function ProjectDetailPage() {
   const [reviewScore, setReviewScore] = useState('')
   const [isReviewing, setIsReviewing] = useState(false)
 
-  // Submit for review (COLLABORATEUR)
+  // Submit for review (employee)
   const [isSubmitReviewOpen, setIsSubmitReviewOpen] = useState(false)
   const [submittingTask, setSubmittingTask] = useState<Task | null>(null)
   const [deliverableLink, setDeliverableLink] = useState('')
@@ -190,10 +220,10 @@ export default function ProjectDetailPage() {
   ])
 
   // CHEF can create/assign tasks, but only to their team
-  // COLLABORATEUR can create tasks for themselves
+  // Employees can create tasks for themselves
   // RH is read-only observer
-  const canManageTasks = user?.role === 'CHEF' || user?.role === 'COLLABORATEUR'
-  const canCreateTasks = user?.role === 'CHEF' || user?.role === 'COLLABORATEUR'
+  const canManageTasks = user?.role === 'CHEF' || user?.role === ROLE.EMPLOYEE
+  const canCreateTasks = user?.role === 'CHEF' || user?.role === ROLE.EMPLOYEE
   const canShowTaskButtons = user?.role === 'CHEF' // Only CHEF can see Create Task and Generate AI buttons
   const canManageProject = user?.role === 'CHEF'
 
@@ -217,8 +247,11 @@ export default function ProjectDetailPage() {
         const data = await res.json()
         setProject(data)
       }
-    } catch (err) {
-      console.error('Error fetching project:', err)
+    } catch {
+      toast({
+        title: 'Impossible de charger le projet',
+        variant: 'destructive',
+      })
     } finally {
       setLoading(false)
     }
@@ -233,8 +266,11 @@ export default function ProjectDetailPage() {
         const data = await res.json()
         setEmployees(Array.isArray(data) ? data : [])
       }
-    } catch (err) {
-      console.error('Error fetching employees:', err)
+    } catch {
+      toast({
+        title: "Impossible de charger l'equipe",
+        variant: 'destructive',
+      })
     }
   }
 
@@ -247,18 +283,21 @@ export default function ProjectDetailPage() {
 
       const data = await res.json()
       setTechnicalSkillsCatalog(mapTechnicalSkillCatalogItems(data))
-    } catch (err) {
-      console.error('Error fetching technical skills:', err)
+    } catch {
+      toast({
+        title: 'Impossible de charger les competences techniques',
+        variant: 'destructive',
+      })
     }
   }
 
   const handleDragStart = (task: Task) => {
-    // COLLABORATEUR can only drag their own tasks
-    if (user?.role === 'COLLABORATEUR' && task.assigneeId !== user.id) {
+    // Employees can only drag their own tasks
+    if (user?.role === ROLE.EMPLOYEE && task.assigneeId !== user.id) {
       return
     }
-    // Block dragging for COLLABORATEUR when task is in review
-    if (user?.role === 'COLLABORATEUR' && task.status === 'IN_REVIEW' && task.assigneeId === user.id) {
+    // Block dragging for employee when task is in review
+    if (user?.role === ROLE.EMPLOYEE && task.status === 'IN_REVIEW' && task.assigneeId === user.id) {
       return
     }
     setDraggedTask(task)
@@ -281,19 +320,24 @@ export default function ProjectDetailPage() {
         await fetchProject()
       } else {
         const data = await res.json().catch(() => ({}))
-        alert(data.error || "Impossible de déplacer la tâche")
+        toast({
+          title: data.error || "Impossible de deplacer la tache",
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error changing task status:', err)
-      alert("Erreur lors du changement de statut")
+    } catch {
+      toast({
+        title: 'Erreur lors du changement de statut',
+        variant: 'destructive',
+      })
     }
   }
 
   const handleDrop = async (status: string) => {
     if (!draggedTask) return
 
-    // COLLABORATEUR can only move their own tasks
-    if (user?.role === 'COLLABORATEUR' && draggedTask.assigneeId !== user.id) {
+    // Employees can only move their own tasks
+    if (user?.role === ROLE.EMPLOYEE && draggedTask.assigneeId !== user.id) {
       setDraggedTask(null)
       return
     }
@@ -305,11 +349,11 @@ export default function ProjectDetailPage() {
 
     // For drag & drop, keep some restrictions for better UX
     const allowedTransitions = {
-      COLLABORATEUR: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW' },
+      [ROLE.EMPLOYEE]: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW' },
       CHEF: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW', IN_REVIEW: 'DONE' }
     }
 
-    const userRole = user?.role as 'COLLABORATEUR' | 'CHEF'
+    const userRole = user?.role as typeof ROLE.EMPLOYEE | typeof ROLE.MANAGER
     const allowedTarget = allowedTransitions[userRole]?.[draggedTask.status as keyof typeof allowedTransitions[typeof userRole]]
 
     if (allowedTarget !== status) {
@@ -317,10 +361,10 @@ export default function ProjectDetailPage() {
       return
     }
 
-    // Special case for COLLABORATEUR:
+    // Special case for employees:
     // Dragging their own IN_PROGRESS task to IN_REVIEW → open the deliverable submission modal
     if (
-      user?.role === 'COLLABORATEUR' &&
+      user?.role === ROLE.EMPLOYEE &&
       draggedTask.status === 'IN_PROGRESS' &&
       status === 'IN_REVIEW' &&
       draggedTask.assigneeId === user.id
@@ -361,7 +405,7 @@ export default function ProjectDetailPage() {
         return
       }
 
-      const taskData = user?.role === 'COLLABORATEUR'
+      const taskData = user?.role === ROLE.EMPLOYEE
         ? { ...taskForm, assigneeId: user.id, requiredSkills: [] }
         : {
             ...taskForm,
@@ -397,8 +441,11 @@ export default function ProjectDetailPage() {
           setTaskDialogError('Erreur lors de la creation')
         }
       }
-    } catch (err) {
-      console.error('Error creating task:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la creation de la tache',
+        variant: 'destructive',
+      })
     } finally {
       setIsSubmitting(false)
     }
@@ -415,8 +462,11 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await fetchProject()
       }
-    } catch (err) {
-      console.error('Error deleting task:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la suppression de la tache',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -424,7 +474,9 @@ export default function ProjectDetailPage() {
   const handleGenerateTasks = async () => {
     setIsGeneratingTasks(true)
     setAiError(null)
+    setAiWarning(null)
     setGeneratedTasks([])
+    setAiTeamMembers([])
 
     try {
       const res = await fetch(`/api/projects/${projectId}/generate-tasks`, {
@@ -439,10 +491,20 @@ export default function ProjectDetailPage() {
         return
       }
 
-      setGeneratedTasks(data.tasks)
+      setGeneratedTasks(
+        (data.tasks || []).map((task: GeneratedTask) => ({
+          ...task,
+          dueDate: formatGeneratedDueDate(task.dueDate),
+        }))
+      )
+      setAiTeamMembers(Array.isArray(data.teamMembers) ? data.teamMembers : [])
+      setAiWarning(data.warning || null)
       setIsAIPreviewOpen(true)
-    } catch (err) {
-      console.error('Error generating tasks:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la generation des taches',
+        variant: 'destructive',
+      })
       setAiError('Erreur lors de la génération des tâches')
     } finally {
       setIsGeneratingTasks(false)
@@ -463,12 +525,19 @@ export default function ProjectDetailPage() {
         await fetchProject()
         setIsAIPreviewOpen(false)
         setGeneratedTasks([])
+        setAiTeamMembers([])
       } else {
         const error = await res.json()
-        alert(error.error || 'Erreur lors de la sauvegarde des tâches')
+        toast({
+          title: error.error || 'Erreur lors de la sauvegarde des taches',
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error saving tasks:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la sauvegarde des taches',
+        variant: 'destructive',
+      })
     } finally {
       setIsSubmitting(false)
     }
@@ -485,17 +554,36 @@ export default function ProjectDetailPage() {
   }
 
   const handleAddManualTask = () => {
+    const defaultAssigneeId = aiTeamMembers[0]?.id || project?.team[0]?.id || ''
+
     setGeneratedTasks([
       ...generatedTasks,
       {
         title: '',
         description: '',
-        assignedUserId: project?.team[0]?.id || '',
-        dueDate: project?.endDate || '',
-        priority: 'MEDIUM'
+        assignedUserId: defaultAssigneeId,
+        dueDate: formatGeneratedDueDate(project?.endDate || ''),
+        priority: 'MEDIUM',
+        comment: ''
       }
     ])
   }
+
+  const previewTeamMembers: AITeamMember[] = aiTeamMembers.length > 0
+    ? aiTeamMembers
+    : (project?.team || []).map((member) => ({
+        id: member.id,
+        name: member.name,
+      }))
+
+  const generatedAssignments = useMemo(
+    () =>
+      previewTeamMembers.map((member) => ({
+        ...member,
+        taskCount: generatedTasks.filter((task) => task.assignedUserId === member.id).length,
+      })),
+    [generatedTasks, previewTeamMembers]
+  )
 
   // Task review handlers for CHEF/RH
   const openReviewDialog = (task: Task) => {
@@ -505,7 +593,7 @@ export default function ProjectDetailPage() {
     setIsReviewDialogOpen(true)
   }
 
-  // New: Submit task for review (COLLABORATEUR)
+  // New: Submit task for review (employee)
   const openSubmitReviewModal = (task: Task) => {
     setSubmittingTask(task)
     setDeliverableLink('')
@@ -568,10 +656,16 @@ export default function ProjectDetailPage() {
         setReviewScore('')
       } else {
         const data = await res.json()
-        alert(data.error || "Erreur lors de la révision")
+        toast({
+          title: data.error || 'Erreur lors de la revision',
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      alert("Erreur serveur")
+    } catch {
+      toast({
+        title: 'Erreur serveur',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -599,10 +693,16 @@ export default function ProjectDetailPage() {
         setReviewScore('')
       } else {
         const error = await res.json()
-        alert(error.error || 'Erreur lors de la révision')
+        toast({
+          title: error.error || 'Erreur lors de la revision',
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error reviewing task:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la revision',
+        variant: 'destructive',
+      })
     } finally {
       setIsReviewing(false)
     }
@@ -617,7 +717,10 @@ export default function ProjectDetailPage() {
       const newMembers = selectedMembers.filter(id => !currentTeamIds.includes(id))
       
       if (newMembers.length === 0) {
-        alert('Les membres sélectionnés sont déjà dans le projet')
+        toast({
+          title: 'Les membres selectionnes sont deja dans le projet',
+          variant: 'destructive',
+        })
         return
       }
 
@@ -633,10 +736,16 @@ export default function ProjectDetailPage() {
         setSelectedMembers([])
       } else {
         const error = await res.json()
-        alert(error.error || 'Erreur lors de l\'ajout des membres')
+        toast({
+          title: error.error || "Erreur lors de l'ajout des membres",
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error adding members:', err)
+    } catch {
+      toast({
+        title: "Erreur lors de l'ajout des membres",
+        variant: 'destructive',
+      })
     } finally {
       setIsAddingMembers(false)
     }
@@ -658,10 +767,16 @@ export default function ProjectDetailPage() {
         await fetchProject()
       } else {
         const error = await res.json()
-        alert(error.error || 'Erreur lors de la suppression du membre')
+        toast({
+          title: error.error || 'Erreur lors de la suppression du membre',
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error removing member:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la suppression du membre',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -677,10 +792,16 @@ export default function ProjectDetailPage() {
         router.push('/dashboard/projects')
       } else {
         const error = await res.json()
-        alert(error.error || 'Erreur lors de la suppression du projet')
+        toast({
+          title: error.error || 'Erreur lors de la suppression du projet',
+          variant: 'destructive',
+        })
       }
-    } catch (err) {
-      console.error('Error deleting project:', err)
+    } catch {
+      toast({
+        title: 'Erreur lors de la suppression du projet',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -748,12 +869,13 @@ export default function ProjectDetailPage() {
 
   if (!project) {
     return (
-      <div className="text-center py-12">
-        <p className="text-muted-foreground">Projet non trouvé</p>
-        <Button onClick={() => router.push('/dashboard/projects')} className="mt-4">
-          Retour aux projets
-        </Button>
-      </div>
+      <EmptyState
+        icon={AlertCircle}
+        message="Projet non trouve"
+        description="Retournez a la liste des projets pour en selectionner un autre."
+        actionLabel="Retour aux projets"
+        onAction={() => router.push('/dashboard/projects')}
+      />
     )
   }
 
@@ -813,7 +935,7 @@ export default function ProjectDetailPage() {
               disabled={isGeneratingTasks || !project || project.team.length === 0}
               variant="outline"
               size="sm"
-              className="border-purple-500 text-purple-600 hover:bg-purple-50"
+              className="border-[#1B3A6B] text-[#1B3A6B] hover:bg-[#1B3A6B] hover:text-white"
             >
               {isGeneratingTasks ? (
                 <>
@@ -891,18 +1013,18 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="assignee">
-                      Assigné à {user?.role === 'CHEF' && '(votre équipe)'}{user?.role === 'COLLABORATEUR' && '(vous-même)'}
+                      Assigné à {user?.role === 'CHEF' && '(votre équipe)'}{user?.role === ROLE.EMPLOYEE && '(vous-même)'}
                     </Label>
                     <Select
                       value={taskForm.assigneeId}
                       onValueChange={(value) => setTaskForm({ ...taskForm, assigneeId: value })}
-                      disabled={user?.role === 'COLLABORATEUR'}
+                      disabled={user?.role === ROLE.EMPLOYEE}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Sélectionner..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {user?.role === 'COLLABORATEUR' ? (
+                        {user?.role === ROLE.EMPLOYEE ? (
                           <SelectItem value={user.id}>{user.name} (vous)</SelectItem>
                         ) : (
                           availableEmployees.map(emp => (
@@ -1057,26 +1179,96 @@ export default function ProjectDetailPage() {
 
       {/* AI Task Preview Dialog */}
       <Dialog open={isAIPreviewOpen} onOpenChange={setIsAIPreviewOpen}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-purple-500" />
+        <DialogContent className="max-h-[88vh] max-w-5xl overflow-hidden p-0">
+          <DialogHeader className="border-b px-6 py-5">
+            <DialogTitle className="flex items-center gap-3 text-xl">
+              <span className="rounded-xl bg-[#1B3A6B]/10 p-2 text-[#1B3A6B]">
+                <Sparkles className="h-5 w-5" />
+              </span>
               Tâches générées par l'IA
             </DialogTitle>
+            <DialogDescription>
+              Revoyez, ajustez et distribuez les suggestions avant l&apos;enregistrement dans le projet.
+            </DialogDescription>
           </DialogHeader>
           
           {aiError && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+            <div className="mx-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {aiError}
             </div>
           )}
 
+          {aiWarning && (
+            <div className="mx-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {aiWarning}
+            </div>
+          )}
+
           {generatedTasks.length > 0 ? (
-            <div className="space-y-4">
+            <div className="max-h-[calc(88vh-11rem)] overflow-y-auto px-6 py-5">
+              <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Suggestions</p>
+                  <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{generatedTasks.length}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Membres actifs</p>
+                  <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{previewTeamMembers.length}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Source</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {aiWarning ? 'Suggestion locale' : 'Generation IA'}
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Repartition proposee</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {generatedAssignments.map((member) => (
+                    <div key={member.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{member.name}</p>
+                          <p className="truncate text-xs text-slate-500 dark:text-slate-400">{member.jobTitle || 'Membre actif'}</p>
+                        </div>
+                        <Badge variant="outline" className="border-slate-200 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                          {member.taskCount} tache{member.taskCount !== 1 ? 's' : ''}
+                        </Badge>
+                      </div>
+                      {member.skills && member.skills.length > 0 && (
+                        <p className="mt-3 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
+                          {member.skills
+                            .slice(0, 3)
+                            .map((skill) => `${skill.name} ${skill.level}/5`)
+                            .join(' | ')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
               {generatedTasks.map((task, index) => (
-                <Card key={index} className="p-4">
-                  <div className="flex items-start justify-between gap-4">
+                <Card key={index} className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                  <CardContent className="space-y-4 p-5">
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 dark:border-slate-800 xl:flex-row xl:items-start xl:justify-between">
                     <div className="flex-1 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#1B3A6B]/10 text-sm font-semibold text-[#1B3A6B]">
+                            {String(index + 1).padStart(2, '0')}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Tache proposee</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Ajustez les details avant validation.</p>
+                          </div>
+                        </div>
+                        <Badge variant="outline" className={AI_PRIORITY_STYLES[task.priority] || AI_PRIORITY_STYLES.MEDIUM}>
+                          {getAiPriorityLabel(task.priority)}
+                        </Badge>
+                      </div>
                       <div className="space-y-1">
                         <Label>Titre</Label>
                         <Input
@@ -1089,21 +1281,32 @@ export default function ProjectDetailPage() {
                         <Textarea
                           value={task.description}
                           onChange={(e) => handleUpdateGeneratedTask(index, 'description', e.target.value)}
-                          rows={2}
+                          rows={4}
                         />
                       </div>
-                      <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <Label>Note d&apos;affectation</Label>
+                        <Textarea
+                          value={task.comment || ''}
+                          onChange={(e) => handleUpdateGeneratedTask(index, 'comment', e.target.value)}
+                          rows={3}
+                        />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Mentionnez ici le skill principal, le niveau estime et la logique d&apos;equilibrage.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                         <div className="space-y-1">
-                          <Label>Assigné à</Label>
+                          <Label>Assignee</Label>
                           <Select
                             value={task.assignedUserId}
                             onValueChange={(value) => handleUpdateGeneratedTask(index, 'assignedUserId', value)}
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className="border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {project?.team.map(member => (
+                              {previewTeamMembers.map(member => (
                                 <SelectItem key={member.id} value={member.id}>
                                   {member.name}
                                 </SelectItem>
@@ -1112,20 +1315,21 @@ export default function ProjectDetailPage() {
                           </Select>
                         </div>
                         <div className="space-y-1">
-                          <Label>Date d'échéance</Label>
+                          <Label>Date limite</Label>
                           <Input
                             type="date"
                             value={task.dueDate}
                             onChange={(e) => handleUpdateGeneratedTask(index, 'dueDate', e.target.value)}
+                            className="border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label>Priorité</Label>
+                          <Label>Priorite</Label>
                           <Select
                             value={task.priority}
                             onValueChange={(value) => handleUpdateGeneratedTask(index, 'priority', value)}
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className="border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -1137,26 +1341,34 @@ export default function ProjectDetailPage() {
                         </div>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDeleteGeneratedTask(index)}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex flex-col gap-3 xl:w-64">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        Verifiez l&apos;echeance, la priorite et la charge avant l&apos;enregistrement.
+                      </div>
+                      <Button
+                        variant="ghost"
+                        onClick={() => handleDeleteGeneratedTask(index)}
+                        className="justify-start text-red-500 hover:bg-red-50 hover:text-red-700"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Supprimer cette tache
+                      </Button>
+                    </div>
+                    </div>
                   </div>
+                  </CardContent>
                 </Card>
               ))}
 
               <Button
                 variant="outline"
                 onClick={handleAddManualTask}
-                className="w-full"
+                className="w-full border-dashed border-[#1B3A6B]/35 text-[#1B3A6B] hover:bg-[#1B3A6B]/5"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                Ajouter une tâche manuellement
+                Ajouter une tache manuellement
               </Button>
+            </div>
             </div>
           ) : (
             <p className="text-center text-muted-foreground py-8">
@@ -1164,14 +1376,14 @@ export default function ProjectDetailPage() {
             </p>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="border-t px-6 py-4">
             <Button variant="outline" onClick={() => setIsAIPreviewOpen(false)}>
               Annuler
             </Button>
             <Button
               onClick={handleSaveGeneratedTasks}
               disabled={isSubmitting || generatedTasks.length === 0}
-              className="bg-purple-600 hover:bg-purple-700"
+              className="bg-[#1B3A6B] hover:bg-[#15305a]"
             >
               {isSubmitting ? 'Enregistrement...' : 'Confirmer et enregistrer les tâches'}
             </Button>
@@ -1257,7 +1469,7 @@ export default function ProjectDetailPage() {
                 {tasks.map(task => {
                    const canDrag = 
                      (user?.role === 'CHEF' && project.team.some(t => t.id === user.id)) ||
-                     (user?.role === 'COLLABORATEUR' && 
+                     (user?.role === ROLE.EMPLOYEE && 
                       task.assigneeId === user.id && 
                       task.status !== 'IN_REVIEW')
                   const priorityColors: Record<string, string> = {
@@ -1321,7 +1533,7 @@ export default function ProjectDetailPage() {
                                  rel="noopener noreferrer"
                                  className="text-blue-600 hover:underline block truncate"
                                >
-                                 📎 {task.deliverableLink}
+                                Lien: {task.deliverableLink}
                                </a>
                              )}
                              {task.deliverableNote && (
@@ -1385,13 +1597,13 @@ export default function ProjectDetailPage() {
 
                            {/* Primary Action Button - Dynamic based on status (same style as Soumettre pour révision) */}
                            <div className="pt-2">
-                             {/* COLLABORATEUR actions */}
-                             {user?.role === 'COLLABORATEUR' && task.assigneeId === user.id && (
+                             {/* Employee actions */}
+                             {user?.role === ROLE.EMPLOYEE && task.assigneeId === user.id && (
                                <>
                                  {task.status === 'TODO' && (
                                     <Button
                                       size="sm"
-                                      className="w-full text-xs h-8 bg-white text-[#1B3A6B] border border-[#1B3A6B] hover:bg-[#F59E0B] hover:text-white hover:border-[#F59E0B] transition-all duration-200 active:scale-[0.985]"
+                                      className="h-8 w-full border border-[#1B3A6B] bg-white text-xs text-[#1B3A6B] transition-all duration-200 active:scale-[0.985] hover:border-[#F59E0B] hover:bg-[#F59E0B] hover:text-white dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600"
                                       onClick={() => changeTaskStatus(task.id, 'IN_PROGRESS')}
                                     >
                                       Commencer la tâche
@@ -1401,7 +1613,7 @@ export default function ProjectDetailPage() {
                                   {task.status === 'IN_PROGRESS' && (
                                     <Button
                                       size="sm"
-                                      className="w-full text-xs h-8 bg-white text-[#1B3A6B] border border-[#1B3A6B] hover:bg-[#F59E0B] hover:text-white hover:border-[#F59E0B] transition-all duration-200 active:scale-[0.985] flex items-center justify-center gap-1"
+                                      className="flex h-8 w-full items-center justify-center gap-1 border border-[#1B3A6B] bg-white text-xs text-[#1B3A6B] transition-all duration-200 active:scale-[0.985] hover:border-[#F59E0B] hover:bg-[#F59E0B] hover:text-white dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600"
                                       onClick={() => openSubmitReviewModal(task)}
                                     >
                                       Soumettre pour révision
@@ -1449,7 +1661,7 @@ export default function ProjectDetailPage() {
           
           {reviewingTask && (
             <div className="space-y-4">
-              <div className="bg-gray-50 dark:bg-slate-700 p-4 rounded-lg">
+              <div className="rounded-lg bg-gray-50 p-4 dark:bg-slate-700">
                 <h4 className="font-medium">{reviewingTask.title}</h4>
                 {reviewingTask.description && (
                   <p className="text-sm text-muted-foreground mt-1">{reviewingTask.description}</p>
@@ -1468,7 +1680,7 @@ export default function ProjectDetailPage() {
 
                {/* Deliverable info */}
                {(reviewingTask.deliverableLink || reviewingTask.deliverableNote) && (
-                 <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg border border-amber-200">
+                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950">
                    <div className="font-medium text-sm mb-2 flex items-center gap-2">
                      <Eye className="h-4 w-4" /> Livrable soumis
                    </div>
@@ -1478,9 +1690,9 @@ export default function ProjectDetailPage() {
                        href={reviewingTask.deliverableLink} 
                        target="_blank" 
                        rel="noopener noreferrer" 
-                       className="text-blue-600 hover:underline block text-sm mb-2 break-all"
+                       className="mb-2 block break-all text-sm text-blue-600 hover:underline dark:text-blue-400"
                      >
-                       🔗 {reviewingTask.deliverableLink}
+                      Lien: {reviewingTask.deliverableLink}
                      </a>
                    )}
                    
@@ -1568,12 +1780,12 @@ export default function ProjectDetailPage() {
                   className={`p-4 rounded-lg border text-left transition-all ${
                     isSelected 
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' 
-                      : 'border-gray-200 hover:border-gray-300'
+                      : 'border-gray-200 hover:border-gray-300 dark:border-slate-700 dark:hover:border-slate-500'
                   } ${isCurrent ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <div className="font-medium text-sm">
-                    {status === 'TODO' && '📋 À faire'}
-                    {status === 'IN_PROGRESS' && '⏳ En cours'}
+                    {status === 'TODO' && 'À faire'}
+                    {status === 'IN_PROGRESS' && 'En cours'}
                      {status === 'IN_REVIEW' && 'En révision'}
                      {status === 'DONE' && 'Terminé'}
                   </div>
@@ -1605,7 +1817,7 @@ export default function ProjectDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Submit for Review Modal - COLLABORATEUR */}
+      {/* Submit for Review Modal - employee */}
       <Dialog open={isSubmitReviewOpen} onOpenChange={(open) => {
         setIsSubmitReviewOpen(open)
         if (!open) {
@@ -1673,7 +1885,7 @@ export default function ProjectDetailPage() {
               <Label>Membres actuels</Label>
               <div className="space-y-2 max-h-40 overflow-y-auto">
                 {project?.team.map(member => (
-                  <div key={member.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                  <div key={member.id} className="flex items-center justify-between rounded bg-gray-50 p-2 dark:bg-slate-800">
                     <div className="flex items-center gap-2">
                       <Avatar className="h-6 w-6">
                         <AvatarFallback className="text-xs">{getInitials(member.name)}</AvatarFallback>
@@ -1741,3 +1953,4 @@ export default function ProjectDetailPage() {
     </div>
   )
 }
+

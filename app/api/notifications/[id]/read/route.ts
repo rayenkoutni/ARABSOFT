@@ -1,31 +1,20 @@
-import { prisma } from "@/lib/prisma"
-import { getCurrentUser } from "@/lib/getCurrentUser"
 import { NextResponse } from "next/server"
+import { apiError, handleApiError } from "@/lib/api-response"
+import { serverAuthService } from "@/lib/services/server/auth.service"
+import { notificationServerService } from "@/lib/services/server/notification.service"
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
-  const { id } = await params
-
   try {
-    // Only allow updating if the notification belongs to this user
-    const updated = await prisma.notification.updateMany({
-      where: { 
-        id,
-        employeeId: user.id
-      },
-      data: {
-        read: true
-      }
-    })
+    const user = await serverAuthService.requireAuth(req)
+    const { id } = await params
+    const result = await notificationServerService.markAsRead(id, user.id)
 
-    if (updated.count === 0) {
-      return NextResponse.json({ error: "Notification not found or unauthorized" }, { status: 404 })
+    if (!result) {
+      throw apiError("Notification not found or unauthorized", 404)
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json(result)
   } catch (error) {
-    return NextResponse.json({ error: "Failed to mark as read" }, { status: 500 })
+    return handleApiError(error, "Failed to mark as read")
   }
 }

@@ -1,25 +1,25 @@
-import { prisma } from "@/lib/prisma"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { NextResponse } from "next/server"
+import { NextResponse } from "next/server";
+import { apiError, handleApiError } from "@/lib/utils/api-response";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { slaService } from "@/lib/services/server/sla.service";
 
-export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const resolvedParams = await params;
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    await requireAuth(req, ["RH"]);
+    const { id } = await params;
+    const body = await req.json();
+    const { maxHours } = body;
+
+    if (typeof maxHours !== "number" || maxHours <= 0) {
+      throw apiError("Invalid maxHours", 400);
+    }
+
+    const config = await slaService.updateConfig(id, maxHours);
+    return NextResponse.json(config);
+  } catch (error) {
+    return handleApiError(error, "Failed to update SLA config");
   }
-
-  const body = await req.json()
-  const { maxHours } = body
-
-  if (typeof maxHours !== 'number' || maxHours <= 0) {
-    return NextResponse.json({ error: "Invalid maxHours" }, { status: 400 })
-  }
-
-  const config = await prisma.slaConfig.update({
-    where: { id: resolvedParams.id },
-    data: { maxHours },
-  })
-
-  return NextResponse.json(config)
 }

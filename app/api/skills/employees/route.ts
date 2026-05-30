@@ -1,29 +1,14 @@
-import { NextResponse } from "next/server"
-import { Role } from "@prisma/client"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { prisma } from "@/lib/prisma"
-import { listScopedEmployeeSkills, SkillDomainError } from "@/lib/skills"
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { skillsService } from "@/lib/services/server/skills.service";
+import { handleApiError } from "@/lib/utils/api-response";
 
-export async function GET() {
-  const user = await getCurrentUser()
-  if (!user) {
-    return NextResponse.json({ error: "Non autorisé" }, { status: 401 })
-  }
-
+export async function GET(req: Request) {
   try {
-    const employees = await listScopedEmployeeSkills(prisma, {
-      id: user.id,
-      role: user.role as Role,
-      name: user.name,
-    })
-
-    return NextResponse.json(employees)
+    const user = await requireAuth(req);
+    const result = await skillsService.listEmployeeSkills(user);
+    return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof SkillDomainError) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
-    }
-
-    console.error("Erreur lors du chargement des compétences collaborateurs :", error)
-    return NextResponse.json({ error: "Erreur lors du chargement des compétences collaborateurs" }, { status: 500 })
+    return handleApiError(error, "Erreur lors du chargement des competences collaborateurs");
   }
 }

@@ -7,6 +7,7 @@ import {
   PayslipBonusDetailsPayload,
   PayslipSalaryBreakdownItem,
 } from "@/lib/payslip"
+import { AppError } from "@/lib/errors"
 
 type SalaryHistoryRecord = Pick<
   SalaryHistory,
@@ -148,29 +149,32 @@ export class PayslipService {
       })
 
       if (!request) {
-        throw new Error(`Request not found: ${requestId}`)
+        throw new AppError(`Request not found: ${requestId}`, 404)
       }
       if (request.type !== "DOCUMENT") {
-        throw new Error(`Request type is not DOCUMENT: ${request.type}`)
+        throw new AppError(`Request type is not DOCUMENT: ${request.type}`, 400)
       }
       if (request.status !== "APPROUVE") {
-        throw new Error(`Request status is not APPROUVE: ${request.status}`)
+        throw new AppError(`Request status is not APPROUVE: ${request.status}`, 400)
       }
 
       if (!request.reason) {
-        throw new Error("Missing reason field on DOCUMENT request for payslip period")
+        throw new AppError("Missing reason field on DOCUMENT request for payslip period", 400)
       }
 
       const parts = request.reason.split(":")
       if (parts.length !== 2) {
-        throw new Error(`Invalid reason format "${request.reason}". Expected "MONTHLY:2026-03" or "ANNUAL:2026"`)
+        throw new AppError(
+          `Invalid reason format "${request.reason}". Expected "MONTHLY:2026-03" or "ANNUAL:2026"`,
+          400,
+        )
       }
 
       const [periodTypeRaw, period] = parts
       const periodType = periodTypeRaw.toUpperCase() as PayslipPeriodType
 
       if (!["MONTHLY", "ANNUAL"].includes(periodType) || !period) {
-        throw new Error(`Invalid periodType or period in reason: ${request.reason}`)
+        throw new AppError(`Invalid periodType or period in reason: ${request.reason}`, 400)
       }
 
       const existingByRequest = await prisma.payslip.findUnique({
@@ -189,11 +193,11 @@ export class PayslipService {
         },
       })
       if (!employee) {
-        throw new Error(`Employee not found: ${request.employeeId}`)
+        throw new AppError(`Employee not found: ${request.employeeId}`, 404)
       }
 
       if (employee.salaryHistory.length === 0) {
-        throw new Error("Aucun historique de salaire trouve")
+        throw new AppError("Aucun historique de salaire trouve", 400)
       }
 
       const existingPeriodPayslip = await prisma.payslip.findFirst({
@@ -227,7 +231,7 @@ export class PayslipService {
         const record = pickMajorityHistoryForRange(employee.salaryHistory, start, end)
 
         if (!record) {
-          throw new Error("Aucun historique de salaire trouve")
+          throw new AppError("Aucun historique de salaire trouve", 400)
         }
 
         baseSalary = record.baseSalary
@@ -244,7 +248,7 @@ export class PayslipService {
         salaryBreakdown = buildAnnualSalaryBreakdown(employee.salaryHistory, employee.hireDate, period)
 
         if (salaryBreakdown.length === 0) {
-          throw new Error("Aucun historique de salaire trouve")
+          throw new AppError("Aucun historique de salaire trouve", 400)
         }
 
         resolvedSalary = salaryBreakdown.reduce((sum, item) => sum + item.salary * item.months, 0)

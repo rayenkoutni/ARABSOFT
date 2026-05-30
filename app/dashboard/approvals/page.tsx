@@ -19,8 +19,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { useAuth } from '@/lib'
+import { REQUEST_STATUS, REQUEST_TYPE, ROLE } from '@/lib/constants'
 import { getDocumentTypeLabel } from '@/lib/document-type'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { parseRequestContent } from '@/lib/request-content'
 import { matchesRequestDateRange } from '@/lib/request-date-filter'
 import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
@@ -29,7 +30,7 @@ import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 
 function ApprovalsContent() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const searchParams = useSearchParams()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -51,8 +52,7 @@ function ApprovalsContent() {
       setSelectedRequestError('')
       setSelectedRequest(null)
       setSelectedRequest(await requestService.getRequestById(requestId))
-    } catch (error) {
-      console.error('Failed to load request details:', error)
+    } catch {
       setSelectedRequest(null)
       setSelectedRequestError("Impossible de charger les details de la demande.")
     } finally {
@@ -71,7 +71,7 @@ function ApprovalsContent() {
 
         const requestId = searchParams.get('requestId')
         if (requestId) {
-          const target = data.find((request) => request.id === requestId && request.status === 'EN_ATTENTE_RH')
+          const target = data.find((request) => request.id === requestId && request.status === REQUEST_STATUS.PENDING_HR)
           if (target) {
             await openRequestForExamination(target.id)
           }
@@ -84,10 +84,10 @@ function ApprovalsContent() {
     loadRequests()
   }, [user, searchParams])
 
-  if (!user || user.role !== 'RH') {
+  if (!user || user.role !== ROLE.HR) {
     return (
       <div className="py-12 text-center">
-        <p className="text-muted-foreground">Cette page est reservee aux RH</p>
+        <p className="text-muted-foreground">Cette page est reservee aux ressources humaines</p>
       </div>
     )
   }
@@ -112,8 +112,7 @@ function ApprovalsContent() {
 
       try {
         setSelectedRequest(await requestService.getRequestById(selectedRequest.id))
-      } catch (refreshError) {
-        console.error('Failed to refresh request after approval error:', refreshError)
+      } catch {
       }
     } finally {
       setIsSubmitting(false)
@@ -142,24 +141,24 @@ function ApprovalsContent() {
   }
 
   const selectedRequestInfo = selectedRequest ? parseRequestContent(selectedRequest) : null
-  const selectedDocumentTypeLabel = selectedRequest?.type === 'DOCUMENT'
+  const selectedDocumentTypeLabel = selectedRequest?.type === REQUEST_TYPE.DOCUMENT
     ? getDocumentTypeLabel(selectedRequest.documentType)
     : null
-  const approveActionLabel = selectedRequest?.type === 'DOCUMENT'
+  const approveActionLabel = selectedRequest?.type === REQUEST_TYPE.DOCUMENT
     ? selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
       ? 'Approuver et generer le document'
       : selectedRequest.documentType === 'FICHE_PAIE'
         ? 'Approuver et generer la fiche de paie'
         : 'Approuver'
     : 'Approuver'
-  const confirmApproveActionLabel = selectedRequest?.type === 'DOCUMENT'
+  const confirmApproveActionLabel = selectedRequest?.type === REQUEST_TYPE.DOCUMENT
     ? selectedRequest.documentType === 'ATTESTATION_TRAVAIL'
       ? 'Approuver et generer le document'
       : selectedRequest.documentType === 'FICHE_PAIE'
         ? 'Approuver et generer la fiche de paie'
         : "Confirmer l'approbation"
     : "Confirmer l'approbation"
-  const pendingRequests = requests.filter((request) => request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH')
+  const pendingRequests = requests.filter((request) => request.status === REQUEST_STATUS.PENDING_MANAGER || request.status === REQUEST_STATUS.PENDING_HR)
   const normalizedSearchTerm = normalizeSearchText(searchTerm)
   const searchedRequests = pendingRequests.filter((request) => {
     const searchable = normalizeSearchText(buildRequestCardSearchText(request, user.id))
@@ -179,16 +178,16 @@ function ApprovalsContent() {
     return true
   })
 
-  const pendingChefCount = filteredByMetaRequests.filter((request) => request.status === 'EN_ATTENTE_CHEF').length
-  const pendingRHCount = filteredByMetaRequests.filter((request) => request.status === 'EN_ATTENTE_RH').length
+  const pendingChefCount = filteredByMetaRequests.filter((request) => request.status === REQUEST_STATUS.PENDING_MANAGER).length
+  const pendingRHCount = filteredByMetaRequests.filter((request) => request.status === REQUEST_STATUS.PENDING_HR).length
 
   const visibleRequests = filteredByMetaRequests.filter((request) => {
     if (selectedStatus === 'pending-chef') {
-      return request.status === 'EN_ATTENTE_CHEF'
+      return request.status === REQUEST_STATUS.PENDING_MANAGER
     }
 
     if (selectedStatus === 'pending-rh') {
-      return request.status === 'EN_ATTENTE_RH'
+      return request.status === REQUEST_STATUS.PENDING_HR
     }
 
     return true
@@ -198,10 +197,10 @@ function ApprovalsContent() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold" style={{ fontSize: '22px', fontWeight: 600, color: 'var(--color-text)' }}>
-          Approbations RH
+          Approbations ressources humaines
         </h1>
         <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-          Examinez et approuvez les demandes en attente de validation RH
+          Examinez et approuvez les demandes en attente de validation ressources humaines
         </p>
       </div>
 
@@ -221,7 +220,7 @@ function ApprovalsContent() {
         <TabsList className="h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
           <TabsTrigger className="h-9 flex-none px-4" value="all">Tous ({filteredByMetaRequests.length})</TabsTrigger>
           <TabsTrigger className="h-9 flex-none px-4" value="pending-chef">En attente Chef ({pendingChefCount})</TabsTrigger>
-          <TabsTrigger className="h-9 flex-none px-4" value="pending-rh">En attente RH ({pendingRHCount})</TabsTrigger>
+          <TabsTrigger className="h-9 flex-none px-4" value="pending-rh">En attente ressources humaines ({pendingRHCount})</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -303,7 +302,7 @@ function ApprovalsContent() {
       ) : visibleRequests.length > 0 ? (
         <div className="grid gap-4">
           {visibleRequests.map((request) => {
-            const isActionable = request.status === 'EN_ATTENTE_RH'
+            const isActionable = request.status === REQUEST_STATUS.PENDING_HR
 
             return (
               <div
@@ -323,7 +322,7 @@ function ApprovalsContent() {
       ) : (
         <div className="py-12 text-center" style={{ color: 'var(--color-text-muted)' }}>
           <CheckCircle2 className="mx-auto mb-4 h-12 w-12 opacity-50" style={{ color: 'var(--color-text-muted)' }} />
-          <p>Aucune approbation RH en attente</p>
+          <p>Aucune approbation ressources humaines en attente</p>
         </div>
       )}
 

@@ -6,65 +6,26 @@ import { io, Socket } from 'socket.io-client'
 
 interface AuthContextType {
   user: User | null
+  pendingUser: User | null
   isLoading: boolean
   isAuthenticated: boolean
   isOtpVerified: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<"session" | "otp">
   logout: () => Promise<void>
+  completeOtpVerification: () => Promise<void>
   switchRole?: (role: UserRole) => void
   socket: Socket | null
   setOtpVerified: (verified: boolean) => void
-}
-
-const STORAGE_KEY_PREFIX = 'trusted_device_'
-
-function getInitialOtpVerified(userId: string): boolean {
-  if (typeof window === 'undefined') return false
-  const key = STORAGE_KEY_PREFIX + userId
-  const stored = localStorage.getItem(key)
-  if (!stored) return false
-
-  try {
-    const data = JSON.parse(stored)
-    return Boolean(data.expiresAt && new Date(data.expiresAt).getTime() > Date.now())
-  } catch {
-    return false
-  }
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [pendingUser, setPendingUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [socket, setSocket] = useState<Socket | null>(null)
-
-  const [initialUser] = useState<User | null>(() => {
-    if (typeof window === 'undefined') {
-      return null
-    }
-
-    const stored = localStorage.getItem('hr_user')
-    if (!stored) {
-      return null
-    }
-
-    try {
-      return JSON.parse(stored)
-    } catch {
-      return null
-    }
-  })
-
-  const [isOtpVerified, setIsOtpVerified] = useState<boolean>(() =>
-    initialUser ? getInitialOtpVerified(initialUser.id) : false,
-  )
-
-  useEffect(() => {
-    if (user) {
-      setIsOtpVerified(getInitialOtpVerified(user.id))
-    }
-  }, [user])
+  const [isOtpVerified, setIsOtpVerified] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -94,18 +55,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const data = await res.json()
           if (data.authenticated && data.user) {
             setUser(data.user)
+            setPendingUser(null)
+            setIsOtpVerified(true)
             localStorage.setItem('hr_user', JSON.stringify(data.user))
           } else {
             setUser(null)
+            setPendingUser(null)
+            setIsOtpVerified(false)
             localStorage.removeItem('hr_user')
           }
         } else {
           setUser(null)
+          setPendingUser(null)
+          setIsOtpVerified(false)
           localStorage.removeItem('hr_user')
         }
       } catch (error) {
         console.error('Auth check failed:', error)
         setUser(null)
+        setPendingUser(null)
+        setIsOtpVerified(false)
         localStorage.removeItem('hr_user')
       } finally {
         setIsLoading(false)
@@ -115,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth()
   }, [])
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<"session" | "otp"> => {
     setIsLoading(true)
     try {
       const res = await fetch('/api/auth/login', {
@@ -135,10 +104,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('Reponse de connexion invalide')
       }
 
-      setUser(data)
-      localStorage.setItem('hr_user', JSON.stringify(data))
+      if (data.nextStep === 'session') {
+        setUser(data.user)
+        setPendingUser(null)
+        setIsOtpVerified(true)
+        localStorage.setItem('hr_user', JSON.stringify(data.user))
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('otp_pending')
+        }
+        return 'session'
+      }
+
+      setPendingUser(data.user)
+      setUser(null)
+      setIsOtpVerified(false)
+      localStorage.removeItem('hr_user')
       if (typeof window !== 'undefined') {
         sessionStorage.setItem('otp_pending', 'true')
+      }
+      return 'otp'
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const completeOtpVerification = async () => {
+    setIsLoading(true)
+    try {
+      const res = await fetch('/api/auth/me', { cache: 'no-store' })
+      const data = res.ok ? await res.json() : null
+
+      if (!res.ok || !data?.authenticated || !data.user) {
+        throw new Error('Session introuvable apres verification OTP')
+      }
+
+      setUser(data.user)
+      setPendingUser(null)
+      setIsOtpVerified(true)
+      localStorage.setItem('hr_user', JSON.stringify(data.user))
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('otp_pending')
       }
     } finally {
       setIsLoading(false)
@@ -150,6 +155,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
       setUser(null)
+      setPendingUser(null)
+      setIsOtpVerified(false)
       localStorage.removeItem('hr_user')
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem('otp_pending')
@@ -169,11 +176,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
+        pendingUser,
         isLoading,
         isAuthenticated: !!user,
         isOtpVerified,
         login,
         logout,
+        completeOtpVerification,
         switchRole,
         socket,
         setOtpVerified: setIsOtpVerified,

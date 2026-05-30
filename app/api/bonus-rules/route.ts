@@ -1,36 +1,24 @@
-import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { prisma } from "@/lib/prisma"
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { payrollService } from "@/lib/services/server/payroll.service";
+import { handleApiError } from "@/lib/utils/api-response";
 
-export async function GET() {
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+export async function GET(req: Request) {
+  try {
+    const user = await requireAuth(req, ["RH"]);
+    const result = await payrollService.listBonusRules(user);
+    return NextResponse.json(result);
+  } catch (error) {
+    return handleApiError(error, "Erreur lors du chargement des regles");
   }
-
-  const rules = await prisma.bonusRule.findMany({ orderBy: { minScore: "asc" } })
-  return NextResponse.json(rules)
 }
 
 export async function POST(req: Request) {
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
-  }
-
   try {
-    const body = await req.json()
-
-    const rule = await prisma.bonusRule.create({
-      data: {
-        minScore: body.minScore,
-        maxScore: body.maxScore,
-        percentage: body.percentage,
-      },
-    })
-
-    return NextResponse.json(rule, { status: 201 })
+    const user = await requireAuth(req, ["RH"]);
+    const result = await payrollService.createBonusRule(user, await req.json());
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: "Erreur lors de la création de la règle" }, { status: 500 })
+    return handleApiError(error, "Erreur lors de la creation de la regle");
   }
 }

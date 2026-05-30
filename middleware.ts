@@ -3,13 +3,13 @@ import type { NextRequest } from "next/server";
 
 // ---------------------------------------------------------------------------
 // Rate limiter — sliding window per IP, in-memory.
-// ⚠️  For multi-process / containerised deployments replace with Redis:
+// For multi-process / containerised deployments replace with Redis:
 //     https://github.com/upstash/ratelimit
 // ---------------------------------------------------------------------------
 interface RateEntry { count: number; windowStart: number }
 const rateLimitMap = new Map<string, RateEntry>();
 
-const RATE_LIMIT      = 5;             // max requests per window
+const RATE_LIMIT      = 20;            // max requests per window
 const RATE_WINDOW_MS  = 60 * 1000;    // 1-minute window
 const CLEANUP_INTERVAL_MS = 60 * 1000;
 
@@ -44,9 +44,17 @@ function isRateLimited(ip: string): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const method = request.method;
+  const authRateLimitBypassPaths = new Set([
+    "/api/auth/me",
+    "/api/auth/logout",
+    "/api/auth/login",
+    "/api/auth/verify-otp",
+  ]);
+  const csrfBypassPaths = new Set(["/api/init"]);
+  const rateLimitedPaths = new Set<string>([]);
 
   // ── CSRF: exact-origin check for state-changing methods ─────────────────
-  if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
+  if (["POST", "PUT", "DELETE", "PATCH"].includes(method) && !csrfBypassPaths.has(pathname)) {
     const origin  = request.headers.get("origin");
     const referer = request.headers.get("referer");
     const host    = request.headers.get("host");
@@ -68,7 +76,11 @@ export function middleware(request: NextRequest) {
   }
 
   // ── Rate limiting: auth routes only ─────────────────────────────────────
-  if (pathname.startsWith("/api/auth/")) {
+  if (
+    rateLimitedPaths.has(pathname) &&
+    !pathname.startsWith("/api/auth/") &&
+    !authRateLimitBypassPaths.has(pathname)
+  ) {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
     if (isRateLimited(ip)) {
       return NextResponse.json(

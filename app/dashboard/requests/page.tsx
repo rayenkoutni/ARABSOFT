@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib'
+import { ROLE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { RequestCard } from '@/components/request-card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { EmptyState } from '@/components/ui/empty-state'
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -13,10 +15,10 @@ import { requestService } from '@/lib'
 import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
-import { Search, X } from 'lucide-react'
+import { FileText, Search, X } from 'lucide-react'
 
 export default function RequestsPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedTab, setSelectedTab] = useState('all')
@@ -41,7 +43,7 @@ export default function RequestsPage() {
     loadRequests()
   }, [user])
 
-  if (!user || user.role !== 'RH') {
+  if (!user || user.role !== ROLE.HR) {
     return (
       <div className="py-12 text-center">
         <p className="text-muted-foreground">Access denied</p>
@@ -200,9 +202,11 @@ export default function RequestsPage() {
               ))}
             </div>
           ) : (
-            <div className="py-12 text-center text-muted-foreground">
-              <p>Aucune demande dans cet historique</p>
-            </div>
+            <EmptyState
+              icon={FileText}
+              message="Aucune demande dans cet historique"
+              description="Essayez un autre filtre ou revenez plus tard apres de nouvelles validations."
+            />
           )}
         </TabsContent>
       </Tabs>

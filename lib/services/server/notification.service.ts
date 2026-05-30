@@ -1,5 +1,17 @@
 import { prisma } from '@/lib/services/prisma.service';
 import { socketService } from '@/lib/services/server/socket.service';
+import { ROLE } from '@/lib/constants';
+import type { Prisma } from '@prisma/client';
+
+function buildNonChatNotificationWhere(employeeId: string): Prisma.NotificationWhereInput {
+  return {
+    employeeId,
+    NOT: [
+      { title: "Nouveau message" },
+      { title: { startsWith: "[CHAT]" } },
+    ],
+  };
+}
 
 class NotificationServerService {
   async createNotification(employeeId: string, title: string, message: string) {
@@ -16,17 +28,16 @@ class NotificationServerService {
       // Also emit via Socket.io for real-time notification
       socketService.emitToUser(employeeId, 'new_notification', notification);
 
-      console.info(`📢 Notification created for employee ${employeeId}: ${title}`);
       return notification;
     } catch (error) {
-      console.error('❌ Failed to create notification:', error);
+      console.error('[notification]', error);
       throw error;
     }
   }
 
   async notifyHR(title: string, message: string) {
     const rhUsers = await prisma.employee.findMany({
-      where: { role: 'RH' },
+      where: { role: ROLE.HR },
       select: { id: true },
     });
 
@@ -40,6 +51,40 @@ class NotificationServerService {
   async notifyManager(managerId: string, title: string, message: string) {
     if (!managerId) return;
     await this.createNotification(managerId, title, message);
+  }
+
+  async getUserNotifications(employeeId: string) {
+    return prisma.notification.findMany({
+      where: buildNonChatNotificationWhere(employeeId),
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+  }
+
+  async clearUserNotifications(employeeId: string) {
+    await prisma.notification.deleteMany({
+      where: buildNonChatNotificationWhere(employeeId),
+    });
+
+    return { success: true };
+  }
+
+  async markAsRead(notificationId: string, employeeId: string) {
+    const updated = await prisma.notification.updateMany({
+      where: {
+        id: notificationId,
+        employeeId,
+      },
+      data: {
+        read: true,
+      },
+    });
+
+    if (updated.count === 0) {
+      return null;
+    }
+
+    return { success: true };
   }
 }
 

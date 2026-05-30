@@ -1,5 +1,6 @@
 'use client'
 
+import { ROLE } from '@/lib/constants'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -151,15 +152,15 @@ export function EmployeeCreateDialog({
     onFormDataChange({
       ...formData,
       role,
-      managerId: role === 'COLLABORATEUR' ? formData.managerId : '',
-      subordinateIds: role === 'CHEF' ? formData.subordinateIds : [],
-      technicalSkills: role === 'COLLABORATEUR' ? formData.technicalSkills : createInitialTechnicalSkillRows(),
+      managerId: role === ROLE.EMPLOYEE ? formData.managerId : '',
+      subordinateIds: role === ROLE.MANAGER ? formData.subordinateIds : [],
+      technicalSkills: role === ROLE.EMPLOYEE ? formData.technicalSkills : createInitialTechnicalSkillRows(),
       salaryGradeId: currentGrade && currentGrade.role !== role ? null : formData.salaryGradeId,
     })
   }
 
   const hasDuplicateSelection =
-    formData.role === 'COLLABORATEUR' &&
+    formData.role === ROLE.EMPLOYEE &&
     hasDuplicateTechnicalSkills(formData.technicalSkills.filter((skill) => skill.skillId))
 
   return (
@@ -221,9 +222,8 @@ export function EmployeeCreateDialog({
                     <SelectValue placeholder="Selectionner" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="COLLABORATEUR">Collaborateur</SelectItem>
-                    <SelectItem value="CHEF">Chef</SelectItem>
-                    <SelectItem value="RH">RH</SelectItem>
+                    <SelectItem value={ROLE.EMPLOYEE}>Collaborateur</SelectItem>
+                    <SelectItem value={ROLE.MANAGER}>Chef</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -309,7 +309,7 @@ export function EmployeeCreateDialog({
               </div>
             </div>
 
-            {(formData.role === 'COLLABORATEUR' || formData.role === '') && (
+            {(formData.role === ROLE.EMPLOYEE || formData.role === '') && (
               <div className="space-y-2">
                 <Label>Chef (manager)</Label>
                 <Select value={formData.managerId} onValueChange={(value) => updateFormData({ managerId: value })}>
@@ -327,7 +327,7 @@ export function EmployeeCreateDialog({
               </div>
             )}
 
-            {formData.role === 'COLLABORATEUR' && (
+            {formData.role === ROLE.EMPLOYEE && (
               <div
                 className="space-y-4 rounded-xl border p-4"
                 style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
@@ -469,7 +469,7 @@ export function EmployeeCreateDialog({
               </div>
             )}
 
-            {formData.role === 'CHEF' && (
+            {formData.role === ROLE.MANAGER && (
               <div className="space-y-2">
                 <Label>Affecter des collaborateurs (subordonnes)</Label>
                 <div

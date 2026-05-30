@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma"
 import { BonusType, Role } from "@prisma/client"
 import { resolveSalary } from "@/lib/utils/salary"
+import { AppError } from "@/lib/errors"
 
 export class BonusService {
   /**
@@ -12,7 +13,7 @@ export class BonusService {
       include: { salaryGrade: true },
     })
 
-    if (!employee) throw new Error("Employee not found")
+    if (!employee) throw new AppError("Employee not found", 404)
 
     return resolveSalary(employee)
   }
@@ -145,7 +146,7 @@ export class BonusService {
     })
 
     if (!employee || employee.managerId !== params.createdBy) {
-      throw new Error("You can only create exceptional bonuses for employees you manage")
+      throw new AppError("You can only create exceptional bonuses for employees you manage", 403)
     }
 
     return prisma.bonus.create({

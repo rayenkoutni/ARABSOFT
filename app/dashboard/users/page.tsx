@@ -1,10 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib'
+import { ROLE } from '@/lib/constants'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { EmptyState } from '@/components/ui/empty-state'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -43,6 +46,7 @@ import {
   mapTechnicalSkillCatalogItems,
   type TechnicalSkillCatalogItem,
 } from '@/lib/skills/client'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 
 interface Employee {
   id: string
@@ -108,15 +112,15 @@ function isFutureDateInputValue(value: string) {
 }
 
 const roleColors: Record<string, { style: React.CSSProperties }> = {
-  RH: { style: { backgroundColor: '#DBEAFE', color: '#1E40AF' } },
-  CHEF: { style: { backgroundColor: '#FEF3C7', color: '#92400E' } },
-  COLLABORATEUR: { style: { backgroundColor: '#D1FAE5', color: '#065F46' } },
+  [ROLE.HR]: { style: { backgroundColor: '#DBEAFE', color: '#1E40AF' } },
+  [ROLE.MANAGER]: { style: { backgroundColor: '#FEF3C7', color: '#92400E' } },
+  [ROLE.EMPLOYEE]: { style: { backgroundColor: '#D1FAE5', color: '#065F46' } },
 }
 
 const roleLabels: Record<string, string> = {
-  RH: 'RH',
-  CHEF: 'Chef',
-  COLLABORATEUR: 'Collaborateur',
+  [ROLE.HR]: 'Ressources humaines',
+  [ROLE.MANAGER]: 'Chef',
+  [ROLE.EMPLOYEE]: 'Collaborateur',
 }
 
 function salaryGradeLabel(grade?: SalaryGrade | undefined) {
@@ -128,7 +132,7 @@ function salaryGradeLabel(grade?: SalaryGrade | undefined) {
 }
 
 export default function UsersPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [technicalSkillsCatalog, setTechnicalSkillsCatalog] = useState<TechnicalSkillCatalogItem[]>([])
   const [salaryGrades, setSalaryGrades] = useState<SalaryGrade[]>([])
@@ -258,16 +262,16 @@ export default function UsersPage() {
     }
   }, [user])
 
-  if (!user || user.role !== 'RH') {
+  if (!user || user.role !== ROLE.HR) {
     return (
       <div className="py-12 text-center">
-        <p className="text-muted-foreground">Acces refuse. Cette page est reservee aux administrateurs RH.</p>
+        <p className="text-muted-foreground">Acces refuse. Cette page est reservee aux administrateurs ressources humaines.</p>
       </div>
     )
   }
 
-  const chefs = employees.filter((employee) => employee.role === 'CHEF')
-  const collaborators = employees.filter((employee) => employee.role === 'COLLABORATEUR')
+  const chefs = employees.filter((employee) => employee.role === ROLE.MANAGER)
+  const collaborators = employees.filter((employee) => employee.role === ROLE.EMPLOYEE)
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -289,7 +293,7 @@ export default function UsersPage() {
     }
 
     try {
-      if (formData.role === 'COLLABORATEUR') {
+      if (formData.role === ROLE.EMPLOYEE) {
         const selectedTechnicalSkills = formData.technicalSkills.filter((skill) => skill.skillId)
 
         if (selectedTechnicalSkills.length < 2) {
@@ -311,7 +315,7 @@ export default function UsersPage() {
           ...formData,
           managerId: formData.managerId || null,
           technicalSkills:
-            formData.role === 'COLLABORATEUR'
+            formData.role === ROLE.EMPLOYEE
               ? formData.technicalSkills.filter((skill) => skill.skillId)
               : [],
         }),
@@ -472,7 +476,7 @@ export default function UsersPage() {
             Gestion des collaborateurs
           </h1>
           <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            Gere tous les utilisateurs du portail RH
+            Gere tous les utilisateurs du portail
           </p>
         </div>
         <Button
@@ -493,6 +497,12 @@ export default function UsersPage() {
 
       {isLoading ? (
         <div className="py-12 text-center"><BrandedLoading /></div>
+      ) : employees.length === 0 ? (
+        <EmptyState
+          icon={User}
+          message="Aucun collaborateur a afficher"
+          description="Ajoutez un collaborateur pour commencer a gerer votre equipe."
+        />
       ) : (
         <>
           <Card className="overflow-x-auto">
@@ -511,7 +521,7 @@ export default function UsersPage() {
               </TableHeader>
               <TableBody>
                 {employees.map((employee) => {
-                  const roleColor = roleColors[employee.role] || roleColors.COLLABORATEUR
+                  const roleColor = roleColors[employee.role] || roleColors[ROLE.EMPLOYEE]
                   return (
                     <TableRow key={employee.id}>
                       <TableCell>
@@ -521,9 +531,7 @@ export default function UsersPage() {
                       <TableCell>{employee.email}</TableCell>
                       <TableCell className="hidden lg:table-cell">{employee.phone || '-'}</TableCell>
                       <TableCell>
-                        <Badge className="border-0" style={roleColor.style}>
-                          {roleLabels[employee.role] || employee.role}
-                        </Badge>
+                        <StatusBadge status={employee.role} domain="role" className="border-0" />
                       </TableCell>
                       <TableCell className="hidden lg:table-cell">{employee.department || '-'}</TableCell>
                       <TableCell>
@@ -538,21 +546,25 @@ export default function UsersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => openEditDialog(employee)} title="Modifier">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setDeleteEmployee(employee)}
-                            title="Supprimer"
-                            disabled={employee.id === user.id}
-                            style={employee.id !== user.id ? { color: '#EF4444' } : {}}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        {employee.role === ROLE.HR ? (
+                          <span className="text-xs text-muted-foreground">Compte RH protege</span>
+                        ) : (
+                          <div className="flex justify-end gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => openEditDialog(employee)} title="Modifier">
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeleteEmployee(employee)}
+                              title="Supprimer"
+                              disabled={employee.id === user.id}
+                              style={employee.id !== user.id ? { color: '#EF4444' } : {}}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   )
@@ -716,7 +728,7 @@ export default function UsersPage() {
                         return {
                           ...current,
                           role: value,
-                          managerId: value === 'COLLABORATEUR' ? current.managerId : '',
+                          managerId: value === ROLE.EMPLOYEE ? current.managerId : '',
                           salaryGradeId: currentGrade && currentGrade.role !== value ? null : current.salaryGradeId,
                         }
                       })
@@ -725,12 +737,11 @@ export default function UsersPage() {
                     <SelectTrigger>
                       <SelectValue placeholder="Selectionner un role" />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="COLLABORATEUR">Collaborateur</SelectItem>
-                      <SelectItem value="CHEF">Chef</SelectItem>
-                      <SelectItem value="RH">RH</SelectItem>
-                    </SelectContent>
-                  </Select>
+                      <SelectContent>
+                        <SelectItem value={ROLE.EMPLOYEE}>Collaborateur</SelectItem>
+                        <SelectItem value={ROLE.MANAGER}>Chef</SelectItem>
+                      </SelectContent>
+                    </Select>
                 </div>
                 <div className="space-y-2 md:col-span-1">
                   <Label>Departement</Label>
@@ -827,7 +838,7 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {editFormData.role === 'COLLABORATEUR' && (
+              {editFormData.role === ROLE.EMPLOYEE && (
                 <div className="space-y-2">
                   <Label>Chef (manager)</Label>
                   <Select
@@ -884,22 +895,19 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!deleteEmployee} onOpenChange={(open) => { if (!open) setDeleteEmployee(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle style={{ color: '#EF4444' }}>Supprimer le collaborateur</DialogTitle>
-            <DialogDescription>
-              Etes-vous sur de vouloir supprimer <strong>{deleteEmployee?.name}</strong> ? Cette action est irreversible et supprimera toutes ses demandes et notifications.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteEmployee(null)} disabled={isDeleting}>Annuler</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
-              {isDeleting ? 'Suppression...' : 'Supprimer'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!deleteEmployee}
+        title="Supprimer le collaborateur"
+        message={
+          deleteEmployee
+            ? `Etes-vous sur de vouloir supprimer ${deleteEmployee.name} ? Cette action est irreversible et supprimera toutes ses demandes et notifications.`
+            : ''
+        }
+        confirmLabel="Supprimer"
+        isLoading={isDeleting}
+        onCancel={() => setDeleteEmployee(null)}
+        onConfirm={handleDelete}
+      />
 
       <Dialog open={!!resetInfo} onOpenChange={(open) => { if (!open) setResetInfo(null) }}>
         <DialogContent className="max-w-md">

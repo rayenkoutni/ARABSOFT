@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useAuth } from '@/lib'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,10 +8,11 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { AlertCircle } from 'lucide-react'
-import { OTPVerificationModal, checkRememberedDevice } from '@/components/otp-verification-modal'
+import { OTPVerificationModal } from '@/components/otp-verification-modal'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 
 export default function LoginPage() {
-  const { login, isLoading, isAuthenticated, isOtpVerified, setOtpVerified, user } = useAuth()
+  const { login, logout, isLoading, isAuthenticated, completeOtpVerification, pendingUser, user } = useCurrentUser()
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -21,44 +21,47 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      if (isOtpVerified) {
-        router.push('/dashboard')
-      } else {
-        const trusted = checkRememberedDevice(user.id)
-        if (trusted) {
-          router.push('/dashboard')
-        } else {
-          setShowOTPVerification(true)
-        }
-      }
+      router.push('/dashboard')
     }
-  }, [isAuthenticated, isOtpVerified, router, user])
+  }, [isAuthenticated, router, user])
+
+  useEffect(() => {
+    if (!isAuthenticated && pendingUser) {
+      setShowOTPVerification(true)
+    } else if (!pendingUser) {
+      setShowOTPVerification(false)
+    }
+  }, [isAuthenticated, pendingUser])
 
   const maskedEmail = useMemo(() => {
-    if (!user?.email) return '***@***.com'
-    const [local, domain] = user.email.split('@')
+    const activeUser = pendingUser ?? user
+    if (!activeUser?.email) return '***@***.com'
+    const [local, domain] = activeUser.email.split('@')
     if (local.length <= 2) return `${local}***@${domain}`
     return `${local[0]}***@${domain}`
-  }, [user])
+  }, [pendingUser, user])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
     try {
-      await login(email, password)
+      const nextStep = await login(email, password)
+      if (nextStep === 'session') {
+        router.push('/dashboard')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Echec de la connexion')
     }
   }
 
-  const handleVerifyOTP = async (code: string): Promise<boolean> => {
-    if (!user) return false
+  const handleVerifyOTP = async (code: string, rememberDevice: boolean): Promise<boolean> => {
+    if (!pendingUser) return false
     try {
       const res = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, code }),
+        body: JSON.stringify({ code, rememberDevice }),
       })
       return res.ok
     } catch {
@@ -67,27 +70,28 @@ export default function LoginPage() {
   }
 
   const handleSendCode = useCallback(async (): Promise<void> => {
-    if (!user) return
+    if (!pendingUser) return
     await fetch('/api/auth/send-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.id }),
+      body: JSON.stringify({}),
     })
-  }, [user])
+  }, [pendingUser])
 
-  const handleVerified = () => {
-    setOtpVerified(true)
+  const handleVerified = async () => {
+    await completeOtpVerification()
     router.push('/dashboard')
   }
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     setShowOTPVerification(false)
+    await logout()
   }
 
-  if (showOTPVerification && user) {
+  if (showOTPVerification && pendingUser) {
     return (
       <OTPVerificationModal
-        userId={user.id}
+        userId={pendingUser.id}
         maskedEmail={maskedEmail}
         onVerify={handleVerifyOTP}
         onSendCode={handleSendCode}

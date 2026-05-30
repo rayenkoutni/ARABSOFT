@@ -3,12 +3,14 @@
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { StatusBadge, TypeBadge } from '@/components/ui/status-badge'
 import { RequestWorkflowTrail } from '@/components/request-workflow-trail'
-import { useAuth } from '@/lib'
+import { REQUEST_STATUS, REQUEST_TYPE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { getDocumentTypeLabel } from '@/lib/document-type'
 import { canUserDownloadGeneratedDocument, canUserExamineRequest } from '@/lib/request-actions'
 import { formatRequestDateTime } from '@/lib/request-date'
-import { Request, RequestStatus } from '@/lib/types'
+import { Request } from '@/lib/types'
 import { parseRequestContent } from '@/lib/request-content'
 import { buildRequestWorkflowSteps } from '@/lib/request-workflow'
 import { formatDateOnly, getLeaveDurationLabel, getLeaveImpactSummary, isLeaveRequestType } from '@/lib/leave-request'
@@ -34,32 +36,16 @@ interface RequestCardProps {
   onDownload?: (request: Request) => void
 }
 
-const statusConfig: Record<RequestStatus, { label: string; style: React.CSSProperties }> = {
-  BROUILLON: { label: 'Brouillon', style: { backgroundColor: '#F3F4F6', color: '#374151' } },
-  EN_ATTENTE_CHEF: { label: 'En attente Chef', style: { backgroundColor: '#FEF3C7', color: '#92400E' } },
-  EN_ATTENTE_RH: { label: 'En attente RH', style: { backgroundColor: '#DBEAFE', color: '#1E40AF' } },
-  APPROUVE: { label: 'Approuve', style: { backgroundColor: '#D1FAE5', color: '#065F46' } },
-  REJETE: { label: 'Rejete', style: { backgroundColor: '#FEE2E2', color: '#991B1B' } },
-}
-
-const typeLabels: Record<string, string> = {
-  CONGE: 'Conge',
-  AUTORISATION: 'Autorisation',
-  DOCUMENT: 'Document RH',
-  PRET: 'Pret',
-}
-
 export function RequestCard({ request, onView, showApprovalAction, onExamine, onDownload }: RequestCardProps) {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const router = useRouter()
-  const status = statusConfig[request.status] || statusConfig.BROUILLON
   const { title, description } = parseRequestContent(request)
   const workflowSteps = buildRequestWorkflowSteps(request, user?.id)
   const canExamine = canUserExamineRequest(request, user?.role)
   const canDownloadDocument = canUserDownloadGeneratedDocument(request, user)
   const slaStatus = formatSlaStatus(request)
   const isLeaveRequest = isLeaveRequestType(request.type)
-  const documentTypeLabel = request.type === 'DOCUMENT' ? getDocumentTypeLabel(request.documentType) : null
+  const documentTypeLabel = request.type === REQUEST_TYPE.DOCUMENT ? getDocumentTypeLabel(request.documentType) : null
   const downloadLabel = request.documentType === 'FICHE_PAIE'
     ? 'Telecharger la fiche de paie'
     : 'Telecharger le document'
@@ -69,7 +55,7 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
     leaveBalance: request.employee?.leaveBalance,
   })
 
-  const isDraft = request.status === 'BROUILLON'
+  const isDraft = request.status === REQUEST_STATUS.DRAFT
 
   const handleClick = () => {
     if (isDraft) {
@@ -110,17 +96,15 @@ export function RequestCard({ request, onView, showApprovalAction, onExamine, on
           )}
         </div>
         <Badge variant="secondary" className="shrink-0">
-          {typeLabels[request.type] || request.type}
+          <TypeBadge type={request.type} />
         </Badge>
       </div>
 
       <div className="flex min-w-0 items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap gap-2">
-          <Badge className="border-0" style={status.style}>
-            {status.label}
-          </Badge>
+          <StatusBadge status={request.status} domain="request" className="border-0" />
           {request.slaStatus === 'BREACHED' && (
-            <Badge variant="destructive">SLA Depasse</Badge>
+            <StatusBadge status={request.slaStatus} domain="sla" />
           )}
           {request.slaStatus === 'WARNING' && slaStatus && (
             <span className="text-xs text-amber-600 font-medium">{slaStatus}</span>

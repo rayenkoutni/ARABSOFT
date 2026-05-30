@@ -16,8 +16,9 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useAuth } from '@/lib'
+import { REQUEST_STATUS, REQUEST_TYPE, ROLE } from '@/lib/constants'
 import { documentTypeOptions } from '@/lib/document-type'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { formatFrenchMonthYear, getPayslipPeriodLabel } from '@/lib/payslip'
 import {
   formatLeaveBalance,
@@ -60,7 +61,7 @@ function toMonthKey(date: Date) {
 }
 
 export default function NewRequestPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const router = useRouter()
   const searchParams = useSearchParams()
   const draftId = searchParams.get('draftId')
@@ -100,8 +101,7 @@ export default function NewRequestPage() {
         const data = (await response.json()) as EmployeeProfileSummary
         setProfile(data)
         setLeaveBalance(typeof data.leaveBalance === 'number' ? data.leaveBalance : 0)
-      } catch (err) {
-        console.error('Failed to load profile:', err)
+      } catch {
       } finally {
         setIsLoadingProfile(false)
       }
@@ -123,8 +123,7 @@ export default function NewRequestPage() {
 
         const data = (await response.json()) as EmployeePayslipSummary[]
         setExistingPayslips(Array.isArray(data) ? data : [])
-      } catch (err) {
-        console.error('Failed to load payslips:', err)
+      } catch {
         setExistingPayslips([])
       } finally {
         setIsLoadingPayslips(false)
@@ -165,8 +164,7 @@ export default function NewRequestPage() {
             }
           }
         }
-      } catch (err) {
-        console.error('Failed to load draft:', err)
+      } catch {
         setError('Echec du chargement du brouillon')
       } finally {
         setIsLoadingDraft(false)
@@ -183,8 +181,7 @@ export default function NewRequestPage() {
       try {
         const requests = await requestService.getUserRequests(user.id)
         setExistingRequests(requests)
-      } catch (err) {
-        console.error('Failed to load requests:', err)
+      } catch {
       }
     }
 
@@ -192,7 +189,7 @@ export default function NewRequestPage() {
   }, [user])
 
   const isLeaveRequest = isLeaveRequestType(formData.type)
-  const isDocumentRequest = formData.type === 'DOCUMENT'
+  const isDocumentRequest = formData.type === REQUEST_TYPE.DOCUMENT
   const isPayslipDocument = isDocumentRequest && formData.documentType === 'FICHE_PAIE'
   const hireDate = profile?.hireDate ? new Date(profile.hireDate) : null
   const leaveImpact = useMemo(
@@ -212,11 +209,11 @@ export default function NewRequestPage() {
   })
   const overlappingLeaveRequest = isLeaveRequest && formData.startDate && formData.endDate
     ? existingRequests.find((request) => {
-        if (request.id === draftId || request.type !== 'CONGE') {
+        if (request.id === draftId || request.type !== REQUEST_TYPE.LEAVE) {
           return false
         }
 
-        if (!['EN_ATTENTE_CHEF', 'EN_ATTENTE_RH', 'APPROUVE'].includes(request.status)) {
+        if (![REQUEST_STATUS.PENDING_MANAGER, REQUEST_STATUS.PENDING_HR, REQUEST_STATUS.APPROVED].some((status) => status === request.status)) {
           return false
         }
 
@@ -305,7 +302,7 @@ export default function NewRequestPage() {
         : ''
     : ''
 
-  if (!user || user.role !== 'COLLABORATEUR') {
+  if (!user || user.role !== ROLE.EMPLOYEE) {
     return (
       <div className="py-12 text-center">
         <p className="text-muted-foreground">Seuls les employes peuvent creer des demandes</p>
@@ -324,9 +321,9 @@ export default function NewRequestPage() {
     setFormData((current) => ({
       ...current,
       type: value,
-      startDate: value === 'CONGE' ? current.startDate : '',
-      endDate: value === 'CONGE' ? current.endDate : '',
-      documentType: value === 'DOCUMENT' ? current.documentType : '',
+      startDate: value === REQUEST_TYPE.LEAVE ? current.startDate : '',
+      endDate: value === REQUEST_TYPE.LEAVE ? current.endDate : '',
+      documentType: value === REQUEST_TYPE.DOCUMENT ? current.documentType : '',
     }))
   }
 
@@ -445,10 +442,10 @@ export default function NewRequestPage() {
                   <SelectValue placeholder="Selectionner le type de demande" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="CONGE">Demande de Conge</SelectItem>
-                  <SelectItem value="AUTORISATION">Autorisation</SelectItem>
-                  <SelectItem value="DOCUMENT">Document RH</SelectItem>
-                  <SelectItem value="PRET">Pret Materiel</SelectItem>
+                  <SelectItem value={REQUEST_TYPE.LEAVE}>Demande de Conge</SelectItem>
+                  <SelectItem value={REQUEST_TYPE.AUTHORIZATION}>Autorisation</SelectItem>
+                  <SelectItem value={REQUEST_TYPE.DOCUMENT}>Document ressources humaines</SelectItem>
+                  <SelectItem value={REQUEST_TYPE.LOAN}>Pret Materiel</SelectItem>
                 </SelectContent>
               </Select>
             </FieldGroup>

@@ -1,5 +1,17 @@
 import nodemailer from 'nodemailer';
 
+function resolveEmailRecipient(to: string) {
+  const demoEmailRedirect = process.env.DEMO_EMAIL_REDIRECT || "tn.spazio@gmail.com";
+  const normalizedTo = to.trim().toLowerCase();
+  const shouldRedirectDemoEmail = normalizedTo.endsWith("@demo.com");
+
+  return {
+    to: shouldRedirectDemoEmail ? demoEmailRedirect : to,
+    originalTo: to,
+    redirected: shouldRedirectDemoEmail,
+  };
+}
+
 /**
  * Sends an email using Nodemailer with Gmail SMTP.
  * Falls back to console logging when SMTP_USER is not configured.
@@ -14,6 +26,7 @@ export async function sendEmail({
   html: string;
   text?: string;
 }): Promise<{ success: boolean }> {
+  const recipient = resolveEmailRecipient(to);
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   const isConfigured =
@@ -24,7 +37,10 @@ export async function sendEmail({
 
   if (!isConfigured) {
     console.warn('\n\n--- [DEV EMAIL FALLBACK: SMTP not configured] ---');
-    console.warn(`To: ${to}`);
+    console.warn(`To: ${recipient.to}`);
+    if (recipient.redirected) {
+      console.warn(`Original recipient: ${recipient.originalTo}`);
+    }
     console.warn(`Subject: ${subject}`);
     console.warn('HTML email would be sent here.');
     console.warn('-------------------------------------------------\n\n');
@@ -43,7 +59,7 @@ export async function sendEmail({
 
   const from = process.env.SMTP_FROM || `ArabSoft RH <${smtpUser}>`;
 
-  await transporter.sendMail({ from, to, subject, html });
+  await transporter.sendMail({ from, to: recipient.to, subject, html });
 
   return { success: true };
 }

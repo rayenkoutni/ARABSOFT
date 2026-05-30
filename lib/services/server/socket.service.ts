@@ -1,12 +1,19 @@
-import { Server as SocketIOServer, Socket } from 'socket.io';
-import { parse } from 'cookie';
-import jwt from 'jsonwebtoken';
-import { ROLE } from '@/lib/constants';
-import { prisma } from '@/lib/prisma';
+import { Server as SocketIOServer, Socket } from "socket.io";
+import { parse } from "cookie";
+import { AUTH_COOKIE_NAME } from "@/lib/constants";
+import { prisma } from "@/lib/prisma";
+import { verifyToken, type SessionTokenPayload } from "@/lib/auth";
 
 interface AuthenticatedUser {
   id: string;
   role: string;
+}
+
+interface SocketSessionClaims {
+  id: string;
+  sub: string;
+  role: string;
+  phase: "session";
 }
 
 class SocketService {
@@ -20,150 +27,155 @@ class SocketService {
   }
 
   get IO() {
-    if (!this.io) throw new Error('Socket.io not initialized');
+    if (!this.io) {
+      throw new Error("Socket.io not initialized");
+    }
+
     return this.io;
   }
 
   private async authenticateSocket(socket: Socket): Promise<AuthenticatedUser | null> {
     try {
       const cookieHeader = socket.handshake.headers.cookie;
-      if (!cookieHeader) return null;
+      if (!cookieHeader) {
+        return null;
+      }
 
       const cookies = parse(cookieHeader);
-      const token = cookies.token;
-      if (!token) return null;
+      const token = cookies[AUTH_COOKIE_NAME];
+      if (!token) {
+        return null;
+      }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as AuthenticatedUser;
-      return decoded;
+      const payload = verifyToken(token) as Partial<SessionTokenPayload> & Partial<SocketSessionClaims>;
+
+      if (payload.phase !== "session" || typeof payload.sub !== "string" || typeof payload.role !== "string") {
+        throw new Error("Unauthorized");
+      }
+
+      return {
+        id: typeof payload.id === "string" ? payload.id : payload.sub,
+        role: payload.role,
+      };
     } catch (error) {
-      console.error('❌ Socket authentication failed:', error);
+      console.error("[socket]", error);
       return null;
     }
   }
 
   private setupHandlers() {
-    this.IO.on('connection', async (socket: Socket) => {
+    this.IO.on("connection", async (socket: Socket) => {
       const user = await this.authenticateSocket(socket);
 
       if (!user) {
-        console.info('⚠️ Unauthenticated socket connection, disconnecting');
         socket.disconnect();
         return;
       }
 
-      console.info(`👤 User ${user.id} (${user.role}) connected (Socket: ${socket.id})`);
-
-      // Join user's personal room
       socket.join(user.id);
 
-      // Track socket ID for this user
       if (!this.userSockets.has(user.id)) {
         this.userSockets.set(user.id, new Set());
       }
-      this.userSockets.get(user.id)!.add(socket.id);
+      this.userSockets.get(user.id)?.add(socket.id);
 
-      // Register custom handlers
       this.registerChatHandlers(socket, user);
 
-      // Handle disconnect
-      socket.on('disconnect', () => {
-        console.info(`🔌 User ${user.id} disconnected (Socket: ${socket.id})`);
+      socket.on("disconnect", () => {
         const sockets = this.userSockets.get(user.id);
-        if (sockets) {
-          sockets.delete(socket.id);
-          if (sockets.size === 0) {
-            this.userSockets.delete(user.id);
-          }
+        if (!sockets) {
+          return;
+        }
+
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          this.userSockets.delete(user.id);
         }
       });
     });
   }
 
   private registerChatHandlers(socket: Socket, user: AuthenticatedUser) {
-    socket.on('send_message', async (data: { conversationId?: string; recipientId?: string; content?: string }) => {
+    socket.on("send_message", async (data: { conversationId?: string; recipientId?: string; content?: string }) => {
       try {
         const { conversationId, recipientId, content } = data;
         if (!conversationId || !content || !recipientId) {
-          socket.emit('error', { message: 'Missing required fields' });
+          socket.emit("error", { message: "Missing required fields" });
           return;
         }
 
-        // Verify participant
         const conversation = await prisma.conversation.findUnique({
           where: { id: conversationId },
           include: { participants: { select: { id: true } } },
         });
 
-        if (!conversation || !conversation.participants.some((p: { id: string }) => p.id === user.id)) {
-          socket.emit('error', { message: 'Not a participant in this conversation' });
+        if (!conversation || !conversation.participants.some((participant) => participant.id === user.id)) {
+          socket.emit("error", { message: "Not a participant in this conversation" });
           return;
         }
 
-        const { chatService } = await import('@/lib/services/server/chat.service');
+        const { chatService } = await import("@/lib/services/server/chat.service");
         try {
           await chatService.sendMessage(user.id, recipientId, conversationId, content);
-        } catch (error) {
-          console.warn('Kafka send failed, falling back to direct save', error);
-          // Fallback direct save if Kafka is down
+        } catch {
           const savedMessage = await prisma.message.create({
             data: { content, senderId: user.id, conversationId },
             include: { sender: { select: { id: true, name: true, email: true, avatar: true } } },
           });
 
-          this.emitToUser(recipientId, 'new_message', savedMessage);
-          this.emitToUser(user.id, 'message_sent', savedMessage);
+          this.emitToUser(recipientId, "new_message", savedMessage);
+          this.emitToUser(user.id, "message_sent", savedMessage);
 
-          const { notificationServerService } = await import('@/lib/services/server/notification.service');
+          const { notificationServerService } = await import("@/lib/services/server/notification.service");
           await notificationServerService.createNotification(
             recipientId,
-            'Nouveau message',
-            `${savedMessage.sender.name}: ${savedMessage.content.substring(0, 100)}`
+            "Nouveau message",
+            `${savedMessage.sender.name}: ${savedMessage.content.substring(0, 100)}`,
           );
         }
       } catch (error) {
-        console.error('Error in send_message handler:', error);
-        socket.emit('error', { message: 'Failed to send message' });
+        console.error("[socket]", error);
+        socket.emit("error", { message: "Failed to send message" });
       }
     });
 
-    socket.on('typing', (data: { conversationId?: string; recipientId?: string }) => {
-      const { conversationId, recipientId } = data;
-      if (!recipientId) return;
-      this.emitToUser(recipientId, 'user_typing', {
+    socket.on("typing", (data: { conversationId?: string; recipientId?: string }) => {
+      if (!data.recipientId) {
+        return;
+      }
+
+      this.emitToUser(data.recipientId, "user_typing", {
         userId: user.id,
-        conversationId,
+        conversationId: data.conversationId,
       });
     });
 
-    socket.on('stop_typing', (data: { conversationId?: string; recipientId?: string }) => {
-      const { conversationId, recipientId } = data;
-      if (!recipientId) return;
-      this.emitToUser(recipientId, 'user_stop_typing', {
+    socket.on("stop_typing", (data: { conversationId?: string; recipientId?: string }) => {
+      if (!data.recipientId) {
+        return;
+      }
+
+      this.emitToUser(data.recipientId, "user_stop_typing", {
         userId: user.id,
-        conversationId,
+        conversationId: data.conversationId,
       });
     });
   }
 
-  emitToUser(userId: string, event: string, data: any) {
+  emitToUser(userId: string, event: string, data: unknown) {
     const socketIds = this.userSockets.get(userId);
-    if (socketIds) {
-      socketIds.forEach((id) => {
-        this.IO.to(id).emit(event, data);
-      });
+    if (!socketIds) {
+      return;
     }
+
+    socketIds.forEach((id) => {
+      this.IO.to(id).emit(event, data);
+    });
   }
 
-  emitToAll(event: string, data: any) {
+  emitToAll(event: string, data: unknown) {
     this.IO.emit(event, data);
-  }
-
-  emitToRole(role: string, event: string, data: any) {
-    // Future implementation: broadcast to all users with a specific role
-    // Requires tracking roles in userSockets or another map
   }
 }
 
 export const socketService = new SocketService();
-
-

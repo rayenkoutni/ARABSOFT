@@ -99,6 +99,7 @@ model Employee {
   password     String
   phone        String?
   avatar       String?
+  signatureUrl String?
   otpCode      String?
   otpExpiresAt DateTime?
   role         Role

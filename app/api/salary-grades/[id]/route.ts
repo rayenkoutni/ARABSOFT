@@ -1,50 +1,26 @@
-import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { prisma } from "@/lib/prisma"
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { payrollService } from "@/lib/services/server/payroll.service";
+import { handleApiError } from "@/lib/utils/api-response";
 
-export async function PUT(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
-  }
-
-  const { id } = await params
-  const body = await req.json()
-
+export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const updated = await prisma.salaryGrade.update({
-      where: { id },
-      data: {
-        role: body.role,
-        level: body.level,
-        baseSalary: body.baseSalary,
-        description: body.description,
-      },
-    })
-    return NextResponse.json(updated)
+    const user = await requireAuth(req, ["RH"]);
+    const { id } = await params;
+    const result = await payrollService.updateSalaryGrade(user, id, await req.json());
+    return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: "Erreur lors de la mise à jour" }, { status: 500 })
+    return handleApiError(error, "Erreur lors de la mise a jour");
   }
 }
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
-  }
-
-  const { id } = await params
-
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await prisma.salaryGrade.delete({ where: { id } })
-    return NextResponse.json({ success: true })
+    const user = await requireAuth(req, ["RH"]);
+    const { id } = await params;
+    const result = await payrollService.deleteSalaryGrade(user, id);
+    return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: "Erreur lors de la suppression" }, { status: 500 })
+    return handleApiError(error, "Erreur lors de la suppression");
   }
 }

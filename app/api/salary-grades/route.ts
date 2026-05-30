@@ -1,41 +1,24 @@
-import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/getCurrentUser"
-import { prisma } from "@/lib/prisma"
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/services/server/auth.service";
+import { payrollService } from "@/lib/services/server/payroll.service";
+import { handleApiError } from "@/lib/utils/api-response";
 
-export async function GET() {
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
+export async function GET(req: Request) {
+  try {
+    const user = await requireAuth(req, ["RH"]);
+    const result = await payrollService.listSalaryGrades(user);
+    return NextResponse.json(result);
+  } catch (error) {
+    return handleApiError(error, "Erreur lors du chargement des grades");
   }
-
-  const grades = await prisma.salaryGrade.findMany({
-    orderBy: [{ role: "asc" }, { level: "asc" }],
-  })
-
-  return NextResponse.json(grades)
 }
 
 export async function POST(req: Request) {
-  const user = await getCurrentUser()
-  if (!user || user.role !== "RH") {
-    return NextResponse.json({ error: "Accès refusé" }, { status: 403 })
-  }
-
   try {
-    const body = await req.json()
-
-    const grade = await prisma.salaryGrade.create({
-      data: {
-        role: body.role,
-        level: body.level,
-        baseSalary: body.baseSalary,
-        description: body.description,
-      },
-    })
-
-    return NextResponse.json(grade, { status: 201 })
+    const user = await requireAuth(req, ["RH"]);
+    const result = await payrollService.createSalaryGrade(user, await req.json());
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
-    console.error(error)
-    return NextResponse.json({ error: "Erreur lors de la création du grade" }, { status: 500 })
+    return handleApiError(error, "Erreur lors de la creation du grade");
   }
 }

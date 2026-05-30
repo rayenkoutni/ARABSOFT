@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAuth, useNotificationRefresh } from '@/lib'
+import { ROLE, type Role } from '@/lib/constants'
+import { useNotificationRefresh } from '@/lib'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -22,6 +23,7 @@ import {
   DrawerTitle,
   DrawerFooter,
 } from '@/components/ui/drawer'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 
 interface Notification {
   id: string;
@@ -39,7 +41,7 @@ interface NavItem {
 }
 
 export function Navigation() {
-  const { user, logout } = useAuth()
+  const { user, logout } = useCurrentUser()
   const router = useRouter()
   const pathname = usePathname()
   const { refreshKey } = useNotificationRefresh()
@@ -163,7 +165,7 @@ export function Navigation() {
     },
   ]
 
-  if (user.role === 'RH') {
+  if (user.role === ROLE.HR) {
     navItems.push(
       {
         label: 'Historique des demandes',
@@ -196,7 +198,7 @@ export function Navigation() {
         icon: <ClipboardList className="h-4 w-4" />,
       },
     )
-  } else if (user.role === 'CHEF') {
+  } else if (user.role === ROLE.MANAGER) {
     navItems.push(
       {
         label: 'Mon Equipe',

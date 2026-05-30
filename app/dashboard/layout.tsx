@@ -1,6 +1,6 @@
 'use client'
 
-import { useAuth } from '@/lib'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { useRouter } from 'next/navigation'
 import { Navigation } from '@/components/navigation'
 import { Sidebar } from '@/components/sidebar'
@@ -13,7 +13,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { isAuthenticated, isOtpVerified, isLoading } = useAuth()
+  const { isAuthenticated, isOtpVerified, isLoading } = useCurrentUser()
   const router = useRouter()
 
   useEffect(() => {

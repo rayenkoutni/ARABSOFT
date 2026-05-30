@@ -1,42 +1,60 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useAuth } from '@/lib'
+import { useRouter } from 'next/navigation'
+import { REQUEST_TYPE, ROLE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { SignatureUploader } from '@/components/ui/signature-uploader'
 import { User, Bell, Lock, Palette, Eye, EyeOff, Save, X, Edit2, CheckCircle2, Clock } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 
 export default function SettingsPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
+  const router = useRouter()
   const { toast } = useToast()
   
   if (!user) return null
 
   // ---- SECTION 1: PROFILE PICTURE ----
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const checkAvatar = async () => {
       try {
-        const res = await fetch('/api/employees/profile')
-        if (res.ok) {
-          const data = await res.json()
+        const profileRes = await fetch('/api/employees/profile')
+        if (profileRes.ok) {
+          const data = await profileRes.json()
           if (data.avatar) {
             setAvatarSrc(data.avatar)
           }
         }
-      } catch (e) {
-        console.error('Failed to fetch profile:', e)
+
+        if (user.role === ROLE.HR) {
+          const signatureRes = await fetch('/api/rh/signature')
+          if (signatureRes.ok) {
+            const signatureData = await signatureRes.json()
+            setSignatureUrl(typeof signatureData.signatureUrl === 'string' ? signatureData.signatureUrl : null)
+          }
+        }
+      } catch {
+        toast({
+          description: 'Impossible de charger le profil',
+          className: 'bg-red-500 text-white border-none',
+          duration: 3000,
+        })
       }
     }
     checkAvatar()
-  }, [])
+  }, [toast, user.role])
 
   const [pendingAvatar, setPendingAvatar] = useState<string | null>(null)
   const [isSavingAvatar, setIsSavingAvatar] = useState(false)
@@ -81,18 +99,14 @@ export default function SettingsPage() {
     
     setIsSavingAvatar(true)
     try {
-      console.info("📤 Sending avatar to server, length:", pendingAvatar.length)
       const res = await fetch('/api/employees/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ avatar: pendingAvatar })
       })
       
-      console.info("📥 Response status:", res.status)
-      
       if (res.ok) {
         const updatedUser = await res.json()
-        console.info("📥 Response data:", updatedUser)
         
         // Update local storage and trigger refresh
         const currentUserData = JSON.parse(localStorage.getItem('hr_user') || '{}')
@@ -115,8 +129,8 @@ export default function SettingsPage() {
               delete pictures[newUserData.id]
               localStorage.setItem('user_profile_pictures', JSON.stringify(pictures))
             }
-          } catch (e) {
-            console.error('Error clearing avatar cache:', e)
+          } catch {
+            // Ignore cache cleanup issues and keep the saved avatar.
           }
         }
         setPendingAvatar(null)
@@ -132,16 +146,19 @@ export default function SettingsPage() {
           duration: 3000,
         })
       } else {
-        const error = await res.json()
-        console.error("❌ Server error:", error)
+        await res.json().catch(() => null)
         toast({
           description: "Erreur lors de la sauvegarde",
           className: "bg-red-500 text-white border-none",
           duration: 3000,
         })
       }
-    } catch (error) {
-      console.error('❌ Error saving avatar:', error)
+    } catch {
+      toast({
+        description: 'Erreur lors de la sauvegarde',
+        className: 'bg-red-500 text-white border-none',
+        duration: 3000,
+      })
     } finally {
       setIsSavingAvatar(false)
     }
@@ -163,9 +180,13 @@ export default function SettingsPage() {
         window.dispatchEvent(new CustomEvent('avatarUpdated', { 
           detail: { userId: currentUserData.id, avatar: null } 
         }))
-    } catch (error) {
+    } catch {
       setAvatarSrc(previousAvatar)
-      console.error('Error deleting avatar:', error)
+      toast({
+        description: 'Erreur lors de la suppression de la photo',
+        className: 'bg-red-500 text-white border-none',
+        duration: 3000,
+      })
     }
   }
 
@@ -302,6 +323,44 @@ export default function SettingsPage() {
     }
   }
 
+  const [transferForm, setTransferForm] = useState({
+    newEmail: '',
+    currentPassword: '',
+  })
+  const [showTransferConfirm, setShowTransferConfirm] = useState(false)
+  const [isTransferring, setIsTransferring] = useState(false)
+  const [transferError, setTransferError] = useState('')
+
+  const handleTransferAccess = async () => {
+    try {
+      setIsTransferring(true)
+      setTransferError('')
+      const res = await fetch('/api/rh/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(transferForm),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error || 'Echec du transfert RH')
+      }
+
+      router.push('/login')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Echec du transfert RH'
+      setTransferError(message)
+      toast({
+        description: message,
+        className: 'bg-red-500 text-white border-none',
+        duration: 4000,
+      })
+    } finally {
+      setShowTransferConfirm(false)
+      setIsTransferring(false)
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-10">
       <div>
@@ -341,7 +400,7 @@ export default function SettingsPage() {
             <Palette className="h-4 w-4 mr-2" />
             Apparence
           </TabsTrigger>
-          {user.role === 'RH' && (
+          {user.role === ROLE.HR && (
             <TabsTrigger 
               value="sla" 
               className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
@@ -356,10 +415,11 @@ export default function SettingsPage() {
           <TabsContent value="profile" className="space-y-6 m-0 opacity-100 animate-in fade-in duration-300">
             {/* Avatar Section */}
             <Card className="p-3 md:p-4 lg:p-5">
-              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Photo de profil</h2>
+              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Photo de profil</h2>
               <div className="flex items-center gap-6">
                 <div 
-                  className="h-[100px] w-[100px] rounded-full overflow-hidden flex items-center justify-center bg-[#F4F6FA] text-[#1B3A6B] text-3xl font-bold border border-[#E2E8F0]"
+                  className="h-[100px] w-[100px] rounded-full overflow-hidden flex items-center justify-center border text-3xl font-bold"
+                  style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', borderColor: 'var(--color-border)' }}
                 >
                   {avatarSrc ? (
                     <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
@@ -407,14 +467,14 @@ export default function SettingsPage() {
              {/* Personal Info Section */}
              <Card className="p-3 md:p-4 lg:p-5">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-semibold" style={{ color: 'var(--color-brand-navy)' }}>Informations personnelles</h2>
+                <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>Informations personnelles</h2>
                 {!isEditingProfile ? (
                   <Button 
                     variant="ghost" 
                     size="sm" 
                     onClick={() => setIsEditingProfile(true)}
                     style={{ color: '#F5A623' }}
-                    className="hover:bg-amber-50"
+                    className="hover:bg-amber-50 dark:hover:bg-amber-950/30"
                   >
                     <Edit2 className="h-4 w-4 mr-2" />
                     Modifier
@@ -499,11 +559,78 @@ export default function SettingsPage() {
                 </div>
               </div>
             </Card>
+
+            {user.role === ROLE.HR && (
+              <Card className="p-3 md:p-4 lg:p-5">
+                <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--color-text)' }}>Signature</h2>
+                <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                  Cette signature sera utilisee dans les documents RH generes par la plateforme.
+                </p>
+                <SignatureUploader
+                  currentSignatureUrl={signatureUrl}
+                  onSignatureSaved={(url) => setSignatureUrl(url)}
+                />
+              </Card>
+            )}
+
+            {user.role === ROLE.HR && (
+              <Card
+                className="p-3 md:p-4 lg:p-5 border-amber-300 dark:border-amber-900/60"
+                style={{ borderColor: '#F59E0B', backgroundColor: 'color-mix(in srgb, var(--color-bg) 72%, #F59E0B 28%)' }}
+              >
+                <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--color-text)' }}>Transfer RH Account</h2>
+                <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                  This will transfer RH access to a new account. Your personal data will be cleared. This cannot be undone.
+                </p>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="new-owner-email">New owner email</Label>
+                    <Input
+                      id="new-owner-email"
+                      type="email"
+                      value={transferForm.newEmail}
+                      onChange={(e) => setTransferForm({ ...transferForm, newEmail: e.target.value })}
+                      placeholder="nouveau.rh@company.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="current-password-confirm">Your current password</Label>
+                    <Input
+                      id="current-password-confirm"
+                      type="password"
+                      value={transferForm.currentPassword}
+                      onChange={(e) => setTransferForm({ ...transferForm, currentPassword: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                {transferError && (
+                  <div
+                    className="mt-4 rounded-lg p-3 text-sm"
+                    style={{ backgroundColor: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
+                  >
+                    {transferError}
+                  </div>
+                )}
+
+                <div className="mt-5">
+                  <Button
+                    type="button"
+                    disabled={!transferForm.newEmail || !transferForm.currentPassword || isTransferring}
+                    style={{ backgroundColor: '#B45309', color: 'white' }}
+                    onClick={() => setShowTransferConfirm(true)}
+                  >
+                    Transfer Access
+                  </Button>
+                </div>
+              </Card>
+            )}
           </TabsContent>
 
           <TabsContent value="security" className="m-0 opacity-100 animate-in fade-in duration-300">
             <Card className="p-3 md:p-4 lg:p-5">
-              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Changer le mot de passe</h2>
+              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Changer le mot de passe</h2>
               <form onSubmit={handlePasswordSubmit} className="space-y-4 max-w-md">
                 
                 <div className="space-y-2">
@@ -569,7 +696,7 @@ export default function SettingsPage() {
 
            <TabsContent value="notifications" className="m-0 opacity-100 animate-in fade-in duration-300">
              <Card className="p-3 md:p-4 lg:p-5">
-              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Préférences de notification</h2>
+              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Préférences de notification</h2>
               
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -580,7 +707,7 @@ export default function SettingsPage() {
                   <Switch checked={notifications.email} onCheckedChange={() => handleToggleNotification('email')} />
                 </div>
                 
-                <div className="h-px bg-[#E2E8F0]" />
+                <div className="h-px" style={{ backgroundColor: 'var(--color-border)' }} />
 
                 <div className="flex items-center justify-between">
                   <div>
@@ -590,7 +717,7 @@ export default function SettingsPage() {
                   <Switch checked={notifications.newRequests} onCheckedChange={() => handleToggleNotification('newRequests')} />
                 </div>
 
-                <div className="h-px bg-[#E2E8F0]" />
+                <div className="h-px" style={{ backgroundColor: 'var(--color-border)' }} />
 
                 <div className="flex items-center justify-between">
                   <div>
@@ -600,7 +727,7 @@ export default function SettingsPage() {
                   <Switch checked={notifications.approvals} onCheckedChange={() => handleToggleNotification('approvals')} />
                 </div>
 
-                <div className="h-px bg-[#E2E8F0]" />
+                <div className="h-px" style={{ backgroundColor: 'var(--color-border)' }} />
 
                 <div className="flex items-center justify-between">
                   <div>
@@ -615,18 +742,18 @@ export default function SettingsPage() {
 
            <TabsContent value="appearance" className="m-0 opacity-100 animate-in fade-in duration-300">
              <Card className="p-3 md:p-4 lg:p-5">
-              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Apparence</h2>
+              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Apparence</h2>
               
               <div className="grid grid-cols-2 max-w-sm gap-4">
                 <div 
-                  className={`border-2 rounded-lg p-4 cursor-pointer flex flex-col items-center gap-3 transition-all ${theme === 'light' ? 'border-[#1B3A6B] bg-slate-50' : 'border-[#E2E8F0] hover:border-slate-300'}`}
+                  className={`flex cursor-pointer flex-col items-center gap-3 rounded-lg border-2 p-4 transition-all ${theme === 'light' ? 'border-[#1B3A6B] bg-slate-50 dark:bg-slate-800' : 'border-[#E2E8F0] hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-500'}`}
                   onClick={() => handleThemeChange('light')}
                 >
                   <div className="h-16 w-full rounded-md bg-[#F4F6FA] border border-[#E2E8F0]"></div>
                   <span className="font-medium" style={{ color: 'var(--color-text)' }}>Clair</span>
                 </div>
                 <div 
-                  className={`border-2 rounded-lg p-4 cursor-pointer flex flex-col items-center gap-3 transition-all ${theme === 'dark' ? 'border-[#1B3A6B] bg-slate-50' : 'border-[#E2E8F0] hover:border-slate-300'}`}
+                  className={`flex cursor-pointer flex-col items-center gap-3 rounded-lg border-2 p-4 transition-all ${theme === 'dark' ? 'border-[#1B3A6B] bg-slate-50 dark:bg-slate-800' : 'border-[#E2E8F0] hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-500'}`}
                   onClick={() => handleThemeChange('dark')}
                 >
                   <div className="h-16 w-full rounded-md bg-[#0F172A] border border-[#334155]"></div>
@@ -636,13 +763,22 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {user.role === 'RH' && (
+          {user.role === ROLE.HR && (
             <TabsContent value="sla" className="m-0 opacity-100 animate-in fade-in duration-300">
               <SlaSettingsTab />
             </TabsContent>
           )}
         </div>
       </Tabs>
+      <ConfirmDialog
+        open={showTransferConfirm}
+        title="Transfer RH account"
+        message="You will be logged out immediately. The new owner will receive login credentials by email."
+        confirmLabel="Transfer Access"
+        isLoading={isTransferring}
+        onCancel={() => setShowTransferConfirm(false)}
+        onConfirm={handleTransferAccess}
+      />
     </div>
   )
 }
@@ -664,13 +800,18 @@ function SlaSettingsTab() {
     setConfigs(configs.map((c) => (c.id === id ? { ...c, maxHours } : c)))
   }
 
-  const labels: Record<string, string> = { CONGE: 'Congé', AUTORISATION: 'Autorisation', PRET: 'Prêt', DOCUMENT: 'Document' }
+  const labels: Record<string, string> = {
+    [REQUEST_TYPE.LEAVE]: 'Congé',
+    [REQUEST_TYPE.AUTHORIZATION]: 'Autorisation',
+    [REQUEST_TYPE.LOAN]: 'Prêt',
+    [REQUEST_TYPE.DOCUMENT]: 'Document',
+  }
 
   if (loading) return <div className="p-6 text-center">Chargement...</div>
 
   return (
     <Card className="p-3 md:p-4 lg:p-5">
-      <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-brand-navy)' }}>Configuration SLA</h2>
+      <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Configuration SLA</h2>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

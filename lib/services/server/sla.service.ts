@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { buildSlaEmailHtml } from '@/lib/mailer'
 import { notificationServerService } from '@/lib/services/server/notification.service'
 import { SlaStatus, RequestStatus, RequestType } from '@prisma/client'
+import type { CurrentUser } from '@/lib/services/server/auth.service'
+import { AppError } from '@/lib/errors'
 
 interface NotificationContent {
   title: string
@@ -9,6 +11,145 @@ interface NotificationContent {
 }
 
 export class SlaService {
+  async getConfigs() {
+    return prisma.slaConfig.findMany()
+  }
+
+  async updateConfig(id: string, maxHours: number) {
+    return prisma.slaConfig.update({
+      where: { id },
+      data: { maxHours },
+    })
+  }
+
+  async getStats(user: CurrentUser) {
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+    const startOfYear = new Date(now.getFullYear(), 0, 1)
+    const baseWhere: Record<string, unknown> = {
+      createdAt: { gte: startOfYear },
+      status: { notIn: ["BROUILLON"] },
+    }
+
+    if (user.role === "CHEF") {
+      baseWhere.employee = { managerId: user.id }
+    }
+
+    const slaStatusDistribution = await prisma.request.groupBy({
+      by: ["slaStatus"],
+      where: baseWhere,
+      _count: { slaStatus: true },
+    })
+
+    const breachedCount = await prisma.request.count({
+      where: {
+        ...baseWhere,
+        slaStatus: "BREACHED",
+        createdAt: { gte: startOfMonth },
+      },
+    })
+
+    const breachByType = await prisma.request.groupBy({
+      by: ["type"],
+      where: {
+        ...baseWhere,
+        slaStatus: "BREACHED",
+      },
+      _count: { type: true },
+    })
+
+    const allRequests = await prisma.request.findMany({
+      where: baseWhere,
+      select: {
+        type: true,
+        slaStatus: true,
+        createdAt: true,
+        updatedAt: true,
+        status: true,
+      },
+    })
+
+    const typeStats: Record<string, { total: number; breached: number; met: number; totalHours: number }> = {}
+    allRequests.forEach((request) => {
+      if (!typeStats[request.type]) {
+        typeStats[request.type] = { total: 0, breached: 0, met: 0, totalHours: 0 }
+      }
+      typeStats[request.type].total += 1
+      if (request.slaStatus === "BREACHED") typeStats[request.type].breached += 1
+      if (request.slaStatus === "MET") typeStats[request.type].met += 1
+      if (request.status !== "BROUILLON") {
+        typeStats[request.type].totalHours +=
+          (new Date(request.updatedAt).getTime() - new Date(request.createdAt).getTime()) / (1000 * 60 * 60)
+      }
+    })
+
+    const byType = Object.entries(typeStats).map(([type, stats]) => ({
+      type,
+      total: stats.total,
+      breached: stats.breached,
+      met: stats.met,
+      complianceRate: stats.total > 0 ? (stats.met / stats.total) * 100 : 0,
+      avgHours: stats.total > 0 ? stats.totalHours / stats.total : 0,
+    }))
+
+    const metCount = await prisma.request.count({
+      where: {
+        ...baseWhere,
+        slaStatus: "MET",
+      },
+    })
+
+    const complianceRate = allRequests.length > 0 ? (metCount / allRequests.length) * 100 : 0
+    const breachTrend = []
+
+    for (let i = 29; i >= 0; i -= 1) {
+      const date = new Date(now)
+      date.setDate(now.getDate() - i)
+      const startOfDay = new Date(date.setHours(0, 0, 0, 0))
+      const endOfDay = new Date(date.setHours(23, 59, 59, 999))
+      const count = await prisma.request.count({
+        where: {
+          ...baseWhere,
+          slaStatus: "BREACHED",
+          createdAt: { gte: startOfDay, lte: endOfDay },
+        },
+      })
+
+      breachTrend.push({
+        date: startOfDay.toISOString().split("T")[0],
+        count,
+      })
+    }
+
+    const totalRequests = await prisma.request.count({ where: baseWhere })
+    const resolvedRequests = await prisma.request.findMany({
+      where: {
+        ...baseWhere,
+        status: { in: ["APPROUVE", "REJETE"] },
+      },
+      select: {
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    const totalResolutionHours = resolvedRequests.reduce((total, request) => {
+      return total + (new Date(request.updatedAt).getTime() - new Date(request.createdAt).getTime()) / (1000 * 60 * 60)
+    }, 0)
+
+    return {
+      breachedThisMonth: breachedCount,
+      breachByType,
+      complianceRate,
+      metCount,
+      byType,
+      breachTrend,
+      slaStatusDistribution,
+      totalRequests,
+      averageResolutionHours: resolvedRequests.length > 0 ? totalResolutionHours / resolvedRequests.length : 0,
+    }
+  }
+
   calculateDeadline(startDate: Date, hours: number): Date {
     return this.addBusinessHours(startDate, hours)
   }
@@ -33,7 +174,7 @@ export class SlaService {
     })
 
     if (!config) {
-      throw new Error(`No SLA config found for request type: ${requestType}`)
+      throw new AppError(`No SLA config found for request type: ${requestType}`, 404)
     }
 
     const request = await prisma.request.findUnique({
@@ -42,7 +183,7 @@ export class SlaService {
     })
 
     if (!request) {
-      throw new Error(`Request not found: ${requestId}`)
+      throw new AppError(`Request not found: ${requestId}`, 404)
     }
 
     const currentOwner = request.approvalType === 'DIRECT_RH' ? 'RH' : 'CHEF'
@@ -70,7 +211,7 @@ export class SlaService {
     })
 
     if (!request) {
-      throw new Error(`Request not found: ${requestId}`)
+      throw new AppError(`Request not found: ${requestId}`, 404)
     }
 
     let newOwner = request.currentOwner

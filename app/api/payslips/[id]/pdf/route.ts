@@ -1,9 +1,10 @@
-import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/getCurrentUser"
+import { NextResponse } from "next/server";
+import { apiError, handleApiError } from "@/lib/utils/api-response";
+import { requireAuth } from "@/lib/services/server/auth.service";
 import {
   generatePayslipPdf,
   getAuthorizedPayslipPdfPayload,
-} from "@/lib/services/server/payslip-pdf.service"
+} from "@/lib/services/server/payslip-pdf.service";
 
 function toFileNamePart(value: string) {
   return value
@@ -11,32 +12,27 @@ function toFileNamePart(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .toLowerCase()
+    .toLowerCase();
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getCurrentUser()
-  if (!user) {
-    return NextResponse.json({ error: "Non autorise" }, { status: 401 })
-  }
-
-  const { id } = await params
-
   try {
+    const user = await requireAuth(req);
+    const { id } = await params;
     const payload = await getAuthorizedPayslipPdfPayload(id, {
       id: user.id,
       role: user.role,
-    })
+    });
 
     if (!payload) {
-      return NextResponse.json({ error: "Fiche de paie introuvable" }, { status: 404 })
+      throw new Error("NOT_FOUND");
     }
 
-    const pdfBuffer = await generatePayslipPdf(payload)
-    const employeeSlug = toFileNamePart(payload.employee.name) || "employe"
+    const pdfBuffer = await generatePayslipPdf(payload);
+    const employeeSlug = toFileNamePart(payload.employee.name) || "employe";
 
     return new NextResponse(pdfBuffer, {
       headers: {
@@ -44,13 +40,16 @@ export async function GET(
         "Content-Disposition": `attachment; filename="fiche-paie-${payload.downloadSlug}-${employeeSlug}.pdf"`,
         "Cache-Control": "private, no-store",
       },
-    })
+    });
   } catch (error) {
-    if (error instanceof Error && error.message === "FORBIDDEN") {
-      return NextResponse.json({ error: "Acces refuse" }, { status: 403 })
+    if (error instanceof Error && error.message === "NOT_FOUND") {
+      return handleApiError(apiError("Fiche de paie introuvable", 404));
     }
 
-    console.error("Erreur generation PDF fiche de paie:", error)
-    return NextResponse.json({ error: "Impossible de generer le PDF" }, { status: 500 })
+    if (error instanceof Error && error.message === "FORBIDDEN") {
+      return handleApiError(apiError("Acces refuse", 403));
+    }
+
+    return handleApiError(error, "Impossible de generer le PDF");
   }
 }

@@ -378,11 +378,11 @@ const slaDefaults: ReadonlyArray<{
   maxHours: number
   description: string
 }> = [
-  { requestType: "CONGE", maxHours: 48, description: "Conge - 48h" },
-  { requestType: "AUTORISATION", maxHours: 24, description: "Autorisation - 24h" },
-  { requestType: "PRET", maxHours: 72, description: "Pret - 72h" },
-  { requestType: "DOCUMENT", maxHours: 48, description: "Document - 48h" },
-]
+    { requestType: "CONGE", maxHours: 48, description: "Conge - 48h" },
+    { requestType: "AUTORISATION", maxHours: 24, description: "Autorisation - 24h" },
+    { requestType: "PRET", maxHours: 72, description: "Pret - 72h" },
+    { requestType: "DOCUMENT", maxHours: 48, description: "Document - 48h" },
+  ]
 
 const demoProjects = [
   {
@@ -641,9 +641,9 @@ ON CONFLICT ("name") DO NOTHING;`)
       const createdAt = addEntry?.[6] ?? onboardingDate
       const updatedAt = historyForSkill.length > 0
         ? historyForSkill
-            .map((entry) => entry[6])
-            .sort()
-            .at(-1) ?? createdAt
+          .map((entry) => entry[6])
+          .sort()
+          .at(-1) ?? createdAt
         : createdAt
 
       return `
@@ -813,20 +813,16 @@ async function main() {
   )
 
   console.log(
-    `Seed demo aligne: ${
-      1 + roster.chefs.length + roster.collaborators.length
-    } employes, ${skillCatalog.length} competences, ${
-      Object.values(collaboratorProfiles).reduce(
-        (total, profile) =>
-          total +
-          Object.keys(profile.soft).length +
-          Object.keys(profile.technical).length,
-        0
-      )
-    } competences courantes, ${historyEntries.length} lignes d'historique post-onboarding, ${
-      demoProjects.length
-    } projets, ${demoTasks.length} taches et ${
-      demoTasks.reduce((total, task) => total + task.requiredSkills.length, 0)
+    `Seed demo aligne: ${1 + roster.chefs.length + roster.collaborators.length
+    } employes, ${skillCatalog.length} competences, ${Object.values(collaboratorProfiles).reduce(
+      (total, profile) =>
+        total +
+        Object.keys(profile.soft).length +
+        Object.keys(profile.technical).length,
+      0
+    )
+    } competences courantes, ${historyEntries.length} lignes d'historique post-onboarding, ${demoProjects.length
+    } projets, ${demoTasks.length} taches et ${demoTasks.reduce((total, task) => total + task.requiredSkills.length, 0)
     } competences techniques requises de tache.`
   )
 }

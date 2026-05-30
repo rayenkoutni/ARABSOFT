@@ -1,6 +1,6 @@
 'use client'
 
-import { useAuth } from '@/lib'
+import { ROLE, type Role } from '@/lib/constants'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -17,17 +17,18 @@ import {
   ClipboardList,
   Sparkles,
 } from 'lucide-react'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 
 interface NavItem {
   label: string
   href: string
   icon: React.ReactNode
-  roles?: string[]
+  roles?: Role[]
   badge?: number
 }
 
 export function Sidebar() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const pathname = usePathname()
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -76,7 +77,7 @@ export function Sidebar() {
     },
   ]
 
-  if (user.role === 'RH') {
+  if (user.role === ROLE.HR) {
     navItems.push(
       {
         label: 'Historique des demandes',
@@ -109,7 +110,7 @@ export function Sidebar() {
         icon: <ClipboardList className="h-4 w-4" />,
       },
     )
-  } else if (user.role === 'CHEF') {
+  } else if (user.role === ROLE.MANAGER) {
     navItems.push(
       {
         label: 'Mon Equipe',

@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useAuth } from '@/lib'
 import { usePathname, useRouter } from 'next/navigation'
 import { MessageNotificationPopup } from '@/components/message-notification-popup'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 
 interface MessageData {
   id: string
@@ -19,7 +19,7 @@ interface MessageData {
 }
 
 export function GlobalMessageHandler() {
-  const { user, socket } = useAuth()
+  const { user, socket } = useCurrentUser()
   const pathname = usePathname()
   const router = useRouter()
   const [popupNotification, setPopupNotification] = useState<{

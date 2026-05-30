@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { History, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
-import { useAuth } from '@/lib'
+import { ROLE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { BrandedLoading } from '@/components/ui/spinner'
 import {
   Card,
@@ -25,16 +27,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { SkillBadgeList } from '@/components/skills/skill-badge-list'
 import { SkillHistoryDialog } from '@/components/skills/skill-history-dialog'
 import { SkillManagementDialog } from '@/components/skills/skill-management-dialog'
@@ -109,7 +101,7 @@ function getDeleteSkillDialogDescription(skill: SkillCatalogItem) {
 }
 
 export default function SkillsPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const [employees, setEmployees] = useState<EmployeeSkillsListItem[]>([])
   const [technicalSkillsCatalog, setTechnicalSkillsCatalog] = useState<TechnicalSkillCatalogItem[]>([])
   const [catalogSkills, setCatalogSkills] = useState<SkillCatalogItem[]>([])
@@ -137,9 +129,9 @@ export default function SkillsPage() {
     getDefaultSkillCatalogFormData()
   )
 
-  const isRH = user?.role === 'RH'
-  const isChef = user?.role === 'CHEF'
-  const isCollaborateur = user?.role === 'COLLABORATEUR'
+  const isRH = user?.role === ROLE.HR
+  const isChef = user?.role === ROLE.MANAGER
+  const isCollaborateur = user?.role === ROLE.EMPLOYEE
 
   const fetchEmployeeProfile = async (employeeId: string) => {
     const res = await fetch(`/api/employees/${employeeId}/skills`, { cache: 'no-store' })
@@ -532,7 +524,7 @@ export default function SkillsPage() {
     return (
       <div className="py-12 text-center">
         <p className="text-muted-foreground">
-          Cette page est reservee aux RH, aux managers et aux collaborateurs.
+          Cette page est reservee aux ressources humaines, aux managers et aux collaborateurs.
         </p>
       </div>
     )
@@ -558,7 +550,7 @@ export default function SkillsPage() {
           </h1>
           <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
             {isRH
-              ? 'Les RH pilotent le catalogue global et consultent les historiques des competences.'
+              ? 'Les ressources humaines pilotent le catalogue global et consultent les historiques des competences.'
               : isChef
                 ? 'Gerez directement les competences officielles de votre equipe et consultez leur historique.'
                 : 'Consultez vos competences actuelles et leur historique, en lecture seule.'}
@@ -593,7 +585,7 @@ export default function SkillsPage() {
                   color: isRH ? '#1E40AF' : '#065F46',
                 }}
               >
-                {isRH ? 'Vue RH' : 'Vue manager'}
+                {isRH ? 'Vue ressources humaines' : 'Vue manager'}
               </Badge>
             </>
           )}
@@ -660,7 +652,7 @@ export default function SkillsPage() {
             </TabsTrigger>
             {isRH && (
               <TabsTrigger className="h-9 flex-none px-4" value="catalog">
-                Catalogue RH
+                Catalogue global
               </TabsTrigger>
             )}
           </TabsList>
@@ -956,35 +948,21 @@ export default function SkillsPage() {
         />
       )}
 
-      {isRH && deleteSkill && (
-        <AlertDialog
+      {isRH && deleteSkill ? (
+        <ConfirmDialog
           open={!!deleteSkill}
-          onOpenChange={(open) => {
-            if (!open) closeDeleteSkillDialog()
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Supprimer la competence</AlertDialogTitle>
-              <AlertDialogDescription>{getDeleteSkillDialogDescription(deleteSkill)}</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isDeletingSkill}>Annuler</AlertDialogCancel>
-              <AlertDialogAction
-                disabled={isDeletingSkill}
-                onClick={handleCatalogDelete}
-                className="bg-red-600 text-white hover:bg-red-700"
-              >
-                {isDeletingSkill ? 'Suppression...' : 'Confirmer la suppression'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+          title="Supprimer la competence"
+          message={getDeleteSkillDialogDescription(deleteSkill)}
+          confirmLabel="Confirmer la suppression"
+          isLoading={isDeletingSkill}
+          onCancel={closeDeleteSkillDialog}
+          onConfirm={handleCatalogDelete}
+        />
+      ) : null}
 
       {dialogLoading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-           <div className="rounded-xl bg-white p-3 md:p-4 lg:p-5 shadow-lg">
+           <div className="rounded-xl bg-white p-3 shadow-lg dark:bg-slate-900 md:p-4 lg:p-5">
             <BrandedLoading />
           </div>
         </div>

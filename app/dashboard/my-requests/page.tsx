@@ -11,7 +11,8 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrandedLoading } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useAuth } from '@/lib'
+import { REQUEST_STATUS } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { requestService } from '@/lib'
 import { matchesRequestDateRange } from '@/lib/request-date-filter'
 import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-search'
@@ -19,7 +20,7 @@ import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 
 export default function MyRequestsPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedTab, setSelectedTab] = useState('all')
@@ -65,28 +66,28 @@ export default function MyRequestsPage() {
     }
 
     if (selectedTab === 'pending') {
-      return request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH'
+      return request.status === REQUEST_STATUS.PENDING_MANAGER || request.status === REQUEST_STATUS.PENDING_HR
     }
 
     if (selectedTab === 'draft') {
-      return request.status === 'BROUILLON'
+      return request.status === REQUEST_STATUS.DRAFT
     }
 
     if (selectedTab === 'approved') {
-      return request.status === 'APPROUVE'
+      return request.status === REQUEST_STATUS.APPROVED
     }
 
     if (selectedTab === 'rejected') {
-      return request.status === 'REJETE'
+      return request.status === REQUEST_STATUS.REJECTED
     }
 
     return true
   })
 
-  const pendingCount = searchedRequests.filter((request) => request.status === 'EN_ATTENTE_CHEF' || request.status === 'EN_ATTENTE_RH').length
-  const draftCount = searchedRequests.filter((request) => request.status === 'BROUILLON').length
-  const approvedCount = searchedRequests.filter((request) => request.status === 'APPROUVE').length
-  const rejectedCount = searchedRequests.filter((request) => request.status === 'REJETE').length
+  const pendingCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.PENDING_MANAGER || request.status === REQUEST_STATUS.PENDING_HR).length
+  const draftCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.DRAFT).length
+  const approvedCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.APPROVED).length
+  const rejectedCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.REJECTED).length
   const handleDownloadDocument = (request: Request) => {
     window.open(requestService.getRequestDownloadUrl(request), '_blank', 'noopener,noreferrer')
   }

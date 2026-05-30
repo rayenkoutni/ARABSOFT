@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib'
+import { ROLE } from '@/lib/constants'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { RequestCard } from '@/components/request-card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -16,7 +17,7 @@ import { Request } from '@/lib/types'
 import { Search, X } from 'lucide-react'
 
 export default function TeamRequestsPage() {
-  const { user } = useAuth()
+  const { user } = useCurrentUser()
   const [requests, setRequests] = useState<Request[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -41,7 +42,7 @@ export default function TeamRequestsPage() {
     loadRequests()
   }, [user])
 
-  if (!user || user.role !== 'CHEF') {
+  if (!user || user.role !== ROLE.MANAGER) {
     return (
       <div className="py-12 text-center">
         <p className="text-muted-foreground">This page is for managers only</p>
