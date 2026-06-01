@@ -16,6 +16,7 @@ import { slaService } from "@/lib/services/server/sla.service";
 import { ApiError } from "@/lib/api-response";
 import { removeGeneratedDocumentFile } from "@/lib/documents";
 import { AppError } from "@/lib/errors";
+import { getAnnualBounds, getMonthlyBounds } from "@/lib/payslip";
 import type { PaginationParams, PaginatedResult } from "@/lib/types/pagination";
 
 const requestInclude = {
@@ -91,6 +92,61 @@ class RequestServerService {
     return type === REQUEST_TYPE.DOCUMENT || type === REQUEST_TYPE.LOAN
       ? APPROVAL_TYPE.DIRECT_HR
       : APPROVAL_TYPE.MANAGER_THEN_HR;
+  }
+
+  private salaryHistoryOverlapsRange(
+    records: Array<{ validFrom: Date; validTo: Date | null }>,
+    start: Date,
+    end: Date,
+  ) {
+    return records.some((record) => {
+      const recordEnd = record.validTo ?? new Date(8640000000000000);
+      return record.validFrom.getTime() <= end.getTime() && recordEnd.getTime() >= start.getTime();
+    });
+  }
+
+  private async validatePayslipRequestPeriod(employeeId: string, reason: string) {
+    const [periodType, period] = reason.split(":");
+    if (!periodType || !period || !["MONTHLY", "ANNUAL"].includes(periodType)) {
+      throw new ApiError("La periode de fiche de paie est invalide.", 400);
+    }
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        salaryHistory: {
+          select: {
+            validFrom: true,
+            validTo: true,
+          },
+        },
+      },
+    });
+
+    if (!employee || employee.salaryHistory.length === 0) {
+      throw new ApiError("Aucun historique de salaire trouve", 400);
+    }
+
+    const bounds = periodType === "MONTHLY"
+      ? getMonthlyBounds(period)
+      : getAnnualBounds(period);
+
+    if (!this.salaryHistoryOverlapsRange(employee.salaryHistory, bounds.start, bounds.end)) {
+      throw new ApiError("Aucun salaire disponible pour cette periode.", 400);
+    }
+
+    const existingPayslip = await prisma.payslip.findFirst({
+      where: {
+        employeeId,
+        period,
+        periodType: periodType as "MONTHLY" | "ANNUAL",
+      },
+      select: { id: true },
+    });
+
+    if (existingPayslip) {
+      throw new ApiError("Une fiche de paie existe deja pour cette periode.", 409);
+    }
   }
 
   private async validatePayslipGenerationPreconditions(requestId: string) {
@@ -396,6 +452,10 @@ class RequestServerService {
     const approvalType = this.getApprovalType(input.type);
     const initialStatus = this.getInitialStatus(approvalType, input.isDraft ?? false);
 
+    if (input.type === REQUEST_TYPE.DOCUMENT && input.documentType === "FICHE_PAIE" && input.reason) {
+      await this.validatePayslipRequestPeriod(user.id, input.reason);
+    }
+
     const request = await prisma.request.create({
       data: {
         type: input.type,
@@ -475,6 +535,10 @@ class RequestServerService {
     );
     const approvalType = this.getApprovalType(input.type);
     const nextStatus = this.getInitialStatus(approvalType, input.isDraft ?? false);
+
+    if (input.type === REQUEST_TYPE.DOCUMENT && input.documentType === "FICHE_PAIE" && input.reason) {
+      await this.validatePayslipRequestPeriod(user.id, input.reason);
+    }
 
     const updatedRequest = await prisma.request.update({
       where: { id },

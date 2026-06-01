@@ -21,7 +21,7 @@ import { documentTypeOptions } from '@/lib/document-type'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { fetchEmployeePayslips } from '@/lib/services/client/employees.service'
 import { fetchProfile } from '@/lib/services/client/settings.service'
-import { formatFrenchMonthYear, getPayslipPeriodLabel } from '@/lib/payslip'
+import { formatFrenchMonthYear, getMonthlyBounds, getPayslipPeriodLabel } from '@/lib/payslip'
 import {
   formatLeaveBalance,
   getTodayDateOnly,
@@ -49,23 +49,19 @@ interface EmployeePayslipSummary {
   periodType: 'MONTHLY' | 'ANNUAL'
 }
 
+interface EmployeePayslipAvailabilityResponse {
+  payslips: EmployeePayslipSummary[]
+  availablePeriods?: {
+    monthly?: string[]
+    annual?: string[]
+  }
+}
+
 type PayslipPeriodType = 'MONTHLY' | 'ANNUAL'
 
 function unwrapRequestsResponse(response: Request[] | { data?: Request[] }) {
   if (Array.isArray(response)) return response
   return Array.isArray(response.data) ? response.data : []
-}
-
-function startOfMonthUtc(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 0, 0, 0, 0))
-}
-
-function addMonthUtc(date: Date, months: number) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1, 0, 0, 0, 0))
-}
-
-function toMonthKey(date: Date) {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
 export default function NewRequestPage() {
@@ -86,6 +82,10 @@ export default function NewRequestPage() {
   const [leaveBalance, setLeaveBalance] = useState(0)
   const [existingRequests, setExistingRequests] = useState<Request[]>([])
   const [existingPayslips, setExistingPayslips] = useState<EmployeePayslipSummary[]>([])
+  const [availablePayslipPeriods, setAvailablePayslipPeriods] = useState<{ monthly: string[]; annual: string[] }>({
+    monthly: [],
+    annual: [],
+  })
   const [payslipPeriodType, setPayslipPeriodType] = useState<PayslipPeriodType>('MONTHLY')
   const [selectedMonthlyPeriod, setSelectedMonthlyPeriod] = useState('')
   const [selectedAnnualPeriod, setSelectedAnnualPeriod] = useState('')
@@ -137,11 +137,23 @@ export default function NewRequestPage() {
 
       try {
         setIsLoadingPayslips(true)
-        const data = (await fetchEmployeePayslips(user.id)) as EmployeePayslipSummary[]
-        setExistingPayslips(Array.isArray(data) ? data : [])
+        const data = (await fetchEmployeePayslips(user.id)) as EmployeePayslipSummary[] | EmployeePayslipAvailabilityResponse
+
+        if (Array.isArray(data)) {
+          setExistingPayslips(data)
+          setAvailablePayslipPeriods({ monthly: [], annual: [] })
+          return
+        }
+
+        setExistingPayslips(Array.isArray(data.payslips) ? data.payslips : [])
+        setAvailablePayslipPeriods({
+          monthly: Array.isArray(data.availablePeriods?.monthly) ? data.availablePeriods.monthly : [],
+          annual: Array.isArray(data.availablePeriods?.annual) ? data.availablePeriods.annual : [],
+        })
       } catch {
         setLoadError('Impossible de charger les donnees')
         setExistingPayslips([])
+        setAvailablePayslipPeriods({ monthly: [], annual: [] })
       } finally {
         setIsLoadingPayslips(false)
       }
@@ -211,7 +223,6 @@ export default function NewRequestPage() {
   const isLeaveRequest = isLeaveRequestType(formData.type)
   const isDocumentRequest = formData.type === REQUEST_TYPE.DOCUMENT
   const isPayslipDocument = isDocumentRequest && formData.documentType === 'FICHE_PAIE'
-  const hireDate = profile?.hireDate ? new Date(profile.hireDate) : null
   const leaveImpact = useMemo(
     () =>
       getLeaveImpactSummary({
@@ -256,61 +267,44 @@ export default function NewRequestPage() {
     : ''
 
   const monthlyOptions = useMemo(() => {
-    if (!hireDate) return []
-
-    const today = new Date()
-    const firstAvailable = startOfMonthUtc(hireDate)
-    const lastCompleteMonth = startOfMonthUtc(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)))
-    if (firstAvailable.getTime() > lastCompleteMonth.getTime()) {
-      return []
-    }
-
     const existingMonthlyPeriods = new Set(
       existingPayslips
         .filter((item) => item.periodType === 'MONTHLY')
         .map((item) => item.period),
     )
 
-    const options: Array<{ value: string; label: string; disabled: boolean }> = []
-    for (let cursor = firstAvailable; cursor.getTime() <= lastCompleteMonth.getTime(); cursor = addMonthUtc(cursor, 1)) {
-      const value = toMonthKey(cursor)
-      options.push({
-        value,
-        label: formatFrenchMonthYear(cursor),
-        disabled: existingMonthlyPeriods.has(value),
-      })
-    }
-
-    return options.reverse()
-  }, [existingPayslips, hireDate])
+    return availablePayslipPeriods.monthly.map((value) => ({
+      value,
+      label: formatFrenchMonthYear(getMonthlyBounds(value).start),
+      disabled: existingMonthlyPeriods.has(value),
+    }))
+  }, [availablePayslipPeriods.monthly, existingPayslips])
 
   const annualOptions = useMemo(() => {
-    if (!hireDate) return []
-
-    const today = new Date()
-    const lastCompleteYear = today.getUTCFullYear() - 1
-    if (hireDate.getUTCFullYear() > lastCompleteYear) {
-      return []
-    }
-
     const existingAnnualPeriods = new Set(
       existingPayslips
         .filter((item) => item.periodType === 'ANNUAL')
         .map((item) => item.period),
     )
 
-    const options: Array<{ value: string; label: string; disabled: boolean }> = []
-    for (let year = hireDate.getUTCFullYear(); year <= lastCompleteYear; year += 1) {
-      const value = String(year)
-      options.push({
-        value,
-        label: getPayslipPeriodLabel('ANNUAL', value),
-        disabled: existingAnnualPeriods.has(value),
-      })
-    }
+    return availablePayslipPeriods.annual.map((value) => ({
+      value,
+      label: getPayslipPeriodLabel('ANNUAL', value),
+      disabled: existingAnnualPeriods.has(value),
+    }))
+  }, [availablePayslipPeriods.annual, existingPayslips])
 
-    return options.reverse()
-  }, [existingPayslips, hireDate])
+  useEffect(() => {
+    if (selectedMonthlyPeriod && !monthlyOptions.some((option) => option.value === selectedMonthlyPeriod)) {
+      setSelectedMonthlyPeriod('')
+    }
+  }, [monthlyOptions, selectedMonthlyPeriod])
+
+  useEffect(() => {
+    if (selectedAnnualPeriod && !annualOptions.some((option) => option.value === selectedAnnualPeriod)) {
+      setSelectedAnnualPeriod('')
+    }
+  }, [annualOptions, selectedAnnualPeriod])
 
   const draftRequests = useMemo(
     () => existingRequests.filter((request) => request.status === REQUEST_STATUS.DRAFT),

@@ -40,6 +40,11 @@ function buildRhTransferEmailHtml(data: { email: string; tempPassword: string; l
 </div>`;
 }
 
+function getPortalUrl() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return appUrl.replace(/\/+$/, "");
+}
+
 class RhSettingsService {
   parseTransferInput(body: unknown) {
     return rhTransferInputSchema.parse(body);
@@ -78,7 +83,7 @@ class RhSettingsService {
 
     const tempPassword = crypto.randomBytes(12).toString("base64url");
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/login`;
+    const loginUrl = getPortalUrl();
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const sentMessages = await tx.message.findMany({

@@ -147,6 +147,11 @@ function buildPasswordResetEmailHtml(data: { name: string; email: string; tempPa
 </div>`;
 }
 
+function getPortalUrl() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return appUrl.replace(/\/+$/, "");
+}
+
 function mapEmployeeListItem(employee: {
   id: string;
   name: string;
@@ -185,6 +190,72 @@ function mapEmployeeListItem(employee: {
     salaryGradeId: employee.salaryGradeId,
     salaryOverride: employee.salaryOverride,
     onLeave,
+  };
+}
+
+type SalaryCoverageRecord = {
+  validFrom: Date;
+  validTo: Date | null;
+};
+
+function startOfUtcMonth(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 0, 0, 0, 0));
+}
+
+function endOfUtcMonth(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+}
+
+function addUtcMonths(date: Date, months: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1, 0, 0, 0, 0));
+}
+
+function toMonthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function overlapsSalaryRange(record: SalaryCoverageRecord, start: Date, end: Date) {
+  const recordEnd = record.validTo ?? new Date(8640000000000000);
+  return record.validFrom.getTime() <= end.getTime() && recordEnd.getTime() >= start.getTime();
+}
+
+function buildAvailablePayslipPeriods(salaryHistory: SalaryCoverageRecord[]) {
+  if (salaryHistory.length === 0) {
+    return { monthly: [] as string[], annual: [] as string[] };
+  }
+
+  const today = new Date();
+  const lastCompleteMonth = startOfUtcMonth(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)));
+  const lastCompleteYear = today.getUTCFullYear() - 1;
+  const firstCoveredMonth = startOfUtcMonth(
+    salaryHistory.reduce((earliest, record) =>
+      record.validFrom.getTime() < earliest.getTime() ? record.validFrom : earliest,
+    salaryHistory[0].validFrom),
+  );
+
+  const monthly: string[] = [];
+  for (
+    let cursor = firstCoveredMonth;
+    cursor.getTime() <= lastCompleteMonth.getTime();
+    cursor = addUtcMonths(cursor, 1)
+  ) {
+    const monthEnd = endOfUtcMonth(cursor);
+    if (salaryHistory.some((record) => overlapsSalaryRange(record, cursor, monthEnd))) {
+      monthly.push(toMonthKey(cursor));
+    }
+  }
+
+  const annual = Array.from(
+    new Set(
+      monthly
+        .map((period) => period.slice(0, 4))
+        .filter((year) => Number(year) <= lastCompleteYear),
+    ),
+  ).sort((left, right) => right.localeCompare(left));
+
+  return {
+    monthly: monthly.reverse(),
+    annual,
   };
 }
 
@@ -374,7 +445,7 @@ class EmployeesService {
         role,
         department: department || "Non specifie",
         tempPassword,
-        loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/login`,
+        loginUrl: getPortalUrl(),
       }),
     });
 
@@ -520,7 +591,7 @@ class EmployeesService {
           name: updated.name,
           email: updated.email,
           tempPassword,
-          loginUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/login`,
+          loginUrl: getPortalUrl(),
         }),
       });
     }
@@ -878,11 +949,32 @@ class EmployeesService {
 
   async getEmployeePayslips(actor: CurrentUser, employeeId: string) {
     await this.assertAccessibleEmployee(actor, employeeId);
-    return prisma.payslip.findMany({
-      where: { employeeId },
-      include: { employee: { select: { name: true } } },
-      orderBy: { generatedAt: "desc" },
-    });
+    const [employee, payslips] = await prisma.$transaction([
+      prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: {
+          salaryHistory: {
+            select: {
+              validFrom: true,
+              validTo: true,
+            },
+            orderBy: {
+              validFrom: "asc",
+            },
+          },
+        },
+      }),
+      prisma.payslip.findMany({
+        where: { employeeId },
+        include: { employee: { select: { name: true } } },
+        orderBy: { generatedAt: "desc" },
+      }),
+    ]);
+
+    return {
+      payslips,
+      availablePeriods: buildAvailablePayslipPeriods(employee?.salaryHistory ?? []),
+    };
   }
 
   async assignSalaryGrade(employeeId: string, body: { salaryGradeId?: string | null; salaryOverride?: number | null }) {
