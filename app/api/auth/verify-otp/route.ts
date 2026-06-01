@@ -3,13 +3,16 @@ import { signTrustedDeviceToken } from "@/lib/auth";
 import { AUTH_COOKIE_NAME, PRE_AUTH_COOKIE_NAME, TRUSTED_DEVICE_COOKIE_NAME } from "@/lib/constants";
 import { serverAuthService } from "@/lib/services/server/auth.service";
 import { handleApiError } from "@/lib/utils/api-response";
+import { requireString } from "@/lib/utils/validate";
 import { cookies } from "next/headers";
 import { serialize } from "cookie";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
-    const { code, rememberDevice } = await req.json();
+    const body = await req.json();
+    const code = requireString(body?.code, "code");
+    const rememberDevice = typeof body?.rememberDevice === "boolean" ? body.rememberDevice : false;
     const cookieStore = await cookies();
     const preAuthToken = cookieStore.get(PRE_AUTH_COOKIE_NAME)?.value;
 

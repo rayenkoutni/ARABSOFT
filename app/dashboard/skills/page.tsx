@@ -6,6 +6,15 @@ import { fr } from 'date-fns/locale'
 import { History, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import { ROLE } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import {
+  addSkill,
+  fetchEmployeeSkills,
+  fetchSkills,
+  fetchSkillsEmployees,
+  removeSkill,
+  updateEmployeeSkills,
+  updateSkill,
+} from '@/lib/services/client/skills.service'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { BrandedLoading } from '@/components/ui/spinner'
 import {
@@ -133,30 +142,17 @@ export default function SkillsPage() {
   const isChef = user?.role === ROLE.MANAGER
   const isCollaborateur = user?.role === ROLE.EMPLOYEE
 
-  const fetchEmployeeProfile = async (employeeId: string) => {
-    const res = await fetch(`/api/employees/${employeeId}/skills`, { cache: 'no-store' })
-    const data = await res.json()
-
-    if (!res.ok) {
-      throw new Error(data.error || 'Erreur lors du chargement des competences')
-    }
-
-    return data as EmployeeSkillsProfileResponse
-  }
+  const fetchEmployeeProfile = async (employeeId: string) =>
+    fetchEmployeeSkills(employeeId) as Promise<EmployeeSkillsProfileResponse>
 
   const fetchEmployees = async () => {
     try {
       setLoading(true)
       setPageError('')
-      const res = await fetch('/api/skills/employees', { cache: 'no-store' })
-      const data = await res.json()
-      if (!res.ok) {
-        setPageError(data.error || 'Erreur lors du chargement des collaborateurs')
-        return
-      }
+      const data = await fetchSkillsEmployees()
       setEmployees(mapEmployeeSkillsListItems(data))
-    } catch {
-      setPageError('Erreur lors du chargement des collaborateurs')
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Erreur lors du chargement des collaborateurs')
     } finally {
       setLoading(false)
     }
@@ -182,15 +178,10 @@ export default function SkillsPage() {
   const fetchTechnicalCatalog = async () => {
     try {
       setIsCatalogLoading(true)
-      const res = await fetch('/api/skills?type=TECHNICAL', { cache: 'no-store' })
-      const data = await res.json()
-      if (!res.ok) {
-        setPageError(data.error || 'Erreur lors du chargement des competences techniques')
-        return
-      }
+      const data = await fetchSkills('?type=TECHNICAL')
       setTechnicalSkillsCatalog(mapTechnicalSkillCatalogItems(data))
-    } catch {
-      setPageError('Erreur lors du chargement des competences techniques')
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Erreur lors du chargement des competences techniques')
     } finally {
       setIsCatalogLoading(false)
     }
@@ -200,15 +191,10 @@ export default function SkillsPage() {
     if (!isRH) return
 
     try {
-      const res = await fetch('/api/skills?includeInactive=true', { cache: 'no-store' })
-      const data = await res.json()
-      if (!res.ok) {
-        setPageError(data.error || 'Erreur lors du chargement du catalogue')
-        return
-      }
+      const data = await fetchSkills('?includeInactive=true')
       setCatalogSkills(mapSkillCatalogItems(data))
-    } catch {
-      setPageError('Erreur lors du chargement du catalogue')
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Erreur lors du chargement du catalogue')
     }
   }
 
@@ -350,23 +336,17 @@ export default function SkillsPage() {
               description: catalogFormData.description.trim() || null,
             }
 
-      const res = await fetch(
-        catalogDialogMode === 'create' ? '/api/skills' : `/api/skills/${editingSkill?.id}`,
-        {
-          method: catalogDialogMode === 'create' ? 'POST' : 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }
-      )
-      const data = await res.json()
-      if (!res.ok) {
-        setCatalogError(data.error || "Erreur lors de l'enregistrement de la competence")
-        return
+      if (catalogDialogMode === 'create') {
+        await addSkill(payload)
+      } else if (editingSkill?.id) {
+        await updateSkill(editingSkill.id, payload)
       }
 
       closeCatalogDialog()
       await fetchCatalogSkills()
       await fetchTechnicalCatalog()
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : "Erreur lors de l'enregistrement de la competence")
     } finally {
       setCatalogSubmitting(false)
     }
@@ -375,25 +355,16 @@ export default function SkillsPage() {
   const handleCatalogToggleActive = async (skill: SkillCatalogItem, isActive: boolean) => {
     try {
       setPageError('')
-      const res = await fetch(`/api/skills/${skill.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: skill.name,
-          isActive,
-          description: skill.description || null,
-        }),
+      await updateSkill(skill.id, {
+        name: skill.name,
+        isActive,
+        description: skill.description || null,
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setPageError(data.error || 'Erreur lors de la mise a jour du statut de la competence')
-        return
-      }
 
       await fetchCatalogSkills()
       await fetchTechnicalCatalog()
-    } catch {
-      setPageError('Erreur lors de la mise a jour du statut de la competence')
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Erreur lors de la mise a jour du statut de la competence')
     }
   }
 
@@ -403,20 +374,13 @@ export default function SkillsPage() {
     try {
       setIsDeletingSkill(true)
       setPageError('')
-      const res = await fetch(`/api/skills/${deleteSkill.id}`, {
-        method: 'DELETE',
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setPageError(data.error || 'Erreur lors de la suppression de la competence')
-        return
-      }
+      await removeSkill(deleteSkill.id)
 
       closeDeleteSkillDialog()
       await fetchCatalogSkills()
       await fetchTechnicalCatalog()
-    } catch {
-      setPageError('Erreur lors de la suppression de la competence')
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Erreur lors de la suppression de la competence')
     } finally {
       setIsDeletingSkill(false)
     }
@@ -433,20 +397,13 @@ export default function SkillsPage() {
     try {
       setDialogError('')
       setIsSaving(true)
-      const res = await fetch(`/api/employees/${managerEmployee.id}/skills`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setDialogError(data.error || 'Erreur lors de la mise a jour des competences')
-        return
-      }
+      const data = await updateEmployeeSkills(managerEmployee.id, payload)
 
       setSelectedProfile(data)
       await fetchEmployees()
       setManagerEmployee(null)
+    } catch (error) {
+      setDialogError(error instanceof Error ? error.message : 'Erreur lors de la mise a jour des competences')
     } finally {
       setIsSaving(false)
     }

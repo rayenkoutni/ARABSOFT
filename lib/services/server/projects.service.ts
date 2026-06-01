@@ -1,15 +1,19 @@
 import { logAudit } from "@/lib/audit";
 import { ROLE } from "@/lib/constants";
-import { ProjectStatus } from "@prisma/client";
+import { Prisma, ProjectStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CurrentUser } from "@/lib/services/server/auth.service";
+import { assertProjectAccess, getManagerTeamMemberIds } from "@/lib/services/server/shared.service";
 import type { PreviewTask } from "@/lib/services/server/types";
 import { taskWithRelationsInclude } from "@/lib/tasks";
 import { apiError } from "@/lib/utils/api-response";
 import Groq from "groq-sdk";
 import { promises as fs } from "fs";
+import { cache } from "react";
+import type { PaginationParams, PaginatedResult } from "@/lib/types/pagination";
 import path from "path";
 import { parse as parseEnv } from "dotenv";
+import { getTodayDateOnly, parseDateOnlyToUtcDate, toDateOnlyValue } from "@/lib/leave-request";
 
 interface TeamSkill {
   level: number;
@@ -36,6 +40,7 @@ interface TaskTemplate {
 }
 
 type PartialPreviewTask = Partial<PreviewTask>;
+type ProjectDbClient = Prisma.TransactionClient | typeof prisma;
 
 async function resolveGroqApiKey() {
   try {
@@ -173,6 +178,51 @@ function parseAiTasks(text: string): PartialPreviewTask[] {
   }
 
   throw apiError("Format de reponse invalide pour les taches generees", 422);
+}
+
+function countEnglishSignals(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+
+  const normalized = value.toLowerCase();
+  const englishSignals = [
+    "implement",
+    "build",
+    "create",
+    "update",
+    "improve",
+    "optimize",
+    "review",
+    "testing",
+    "deploy",
+    "dashboard",
+    "feature",
+    "task",
+    "flow",
+    "bug",
+    "backend",
+    "frontend",
+    "best match",
+    "better fit",
+    "on leave",
+    "current workload",
+  ];
+
+  return englishSignals.reduce((count, signal) => (normalized.includes(signal) ? count + 1 : count), 0);
+}
+
+function hasTooMuchEnglishInGeneratedTasks(tasks: PartialPreviewTask[]) {
+  const signalCount = tasks.reduce(
+    (total, task) =>
+      total +
+      countEnglishSignals(task.title) +
+      countEnglishSignals(task.description) +
+      countEnglishSignals(task.comment),
+    0,
+  );
+
+  return signalCount >= 3;
 }
 
 function findBestAssigneeForTask(
@@ -367,85 +417,106 @@ function buildFallbackTasks(args: {
   });
 }
 
+export function validateTaskDueDateForProject(
+  dueDateInput: string,
+  projectSchedule: { startDate?: Date | null; endDate?: Date | null },
+) {
+  const normalizedDueDate = toDateOnlyValue(dueDateInput);
+  const parsedDueDate = normalizedDueDate ? parseDateOnlyToUtcDate(normalizedDueDate) : null;
+  if (!parsedDueDate || !normalizedDueDate) {
+    throw apiError("La date d'echeance d'une tache est invalide", 400);
+  }
+
+  const today = getTodayDateOnly();
+  if (normalizedDueDate < today) {
+    throw apiError("La date d'echeance d'une tache ne peut pas etre dans le passe", 400);
+  }
+
+  const projectStartDate = toDateOnlyValue(projectSchedule.startDate);
+  if (projectStartDate && normalizedDueDate < projectStartDate) {
+    throw apiError("La date d'echeance d'une tache doit etre posterieure ou egale a la date de debut du projet", 400);
+  }
+
+  const projectEndDate = toDateOnlyValue(projectSchedule.endDate);
+  if (projectEndDate && normalizedDueDate > projectEndDate) {
+    throw apiError("La date d'echeance d'une tache doit etre anterieure ou egale a la date de fin du projet", 400);
+  }
+
+  return parsedDueDate;
+}
+
 class ProjectsService {
-  private async getManagerTeamIds(managerId: string) {
-    const teamMembers = await prisma.employee.findMany({
-      where: { managerId },
-      select: { id: true },
-    });
+  private validateProjectDates(startDateInput?: string | null, endDateInput?: string | null) {
+    const today = getTodayDateOnly();
+    const startDate = startDateInput ? parseDateOnlyToUtcDate(startDateInput) : null;
+    const endDate = endDateInput ? parseDateOnlyToUtcDate(endDateInput) : null;
 
-    return teamMembers.map((employee) => employee.id);
+    if (startDateInput && !startDate) {
+      throw apiError("La date de debut du projet est invalide", 400);
+    }
+
+    if (endDateInput && !endDate) {
+      throw apiError("La date de fin du projet est invalide", 400);
+    }
+
+    if (startDateInput && startDateInput < today) {
+      throw apiError("La date de debut du projet ne peut pas etre dans le passe", 400);
+    }
+
+    if (endDateInput && endDateInput < today) {
+      throw apiError("La date de fin du projet ne peut pas etre dans le passe", 400);
+    }
+
+    if (startDateInput && endDateInput && endDateInput < startDateInput) {
+      throw apiError("La date de fin du projet doit etre posterieure ou egale a la date de debut", 400);
+    }
+
+    return { startDate, endDate };
   }
 
-  private async assertProjectAccess(user: CurrentUser, projectId: string) {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: { team: { select: { id: true } } },
-    });
-
-    if (!project) {
-      throw apiError("Projet non trouve", 404);
-    }
-
-    if (user.role === ROLE.HR) {
-      return { project, teamIds: [] as string[] };
-    }
-
-    if (user.role === ROLE.MANAGER) {
-      const teamIds = await this.getManagerTeamIds(user.id);
-      const isAuthorized =
-        project.createdById === user.id ||
-        project.managerId === user.id ||
-        project.team.some((member) => teamIds.includes(member.id));
-
-      if (!isAuthorized) {
-        throw apiError("Acces refuse a ce projet", 403);
-      }
-
-      return { project, teamIds };
-    }
-
-    const isAssigned = project.team.some((member) => member.id === user.id);
-    if (!isAssigned) {
-      throw apiError("Acces refuse a ce projet", 403);
-    }
-
-    return { project, teamIds: [] as string[] };
-  }
-
-  async listProjects(user: CurrentUser) {
+  async listProjects(user: CurrentUser, pagination: PaginationParams = {}) {
+    const { page = 1, limit = 20 } = pagination;
     let whereClause = {};
 
     if (user.role === ROLE.EMPLOYEE) {
       whereClause = { team: { some: { id: user.id } } };
     } else if (user.role === ROLE.MANAGER) {
-      const teamIds = await this.getManagerTeamIds(user.id);
-      whereClause = {
-        OR: [
-          { createdById: user.id },
-          { managerId: user.id },
-          { team: { some: { id: { in: teamIds } } } },
-        ],
-      };
+      whereClause = { createdById: user.id };
     }
 
-    return prisma.project.findMany({
-      where: whereClause,
-      include: {
-        tasks: { include: taskWithRelationsInclude },
-        team: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const [data, total] = await prisma.$transaction([
+      prisma.project.findMany({
+        where: whereClause,
+        include: {
+          tasks: { include: taskWithRelationsInclude },
+          team: { select: { id: true, name: true } },
+          creator: { select: { id: true, name: true } },
+          manager: { select: { id: true, name: true } },
+          changeHistory: {
+            where: { action: "TRANSFERRED" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.project.count({ where: whereClause })
+    ]);
+
+    return { data, total, page, limit, hasMore: page * limit < total };
   }
 
   async getProjectById(user: CurrentUser, projectId: string) {
-    await this.assertProjectAccess(user, projectId);
+    await assertProjectAccess(user, projectId);
     return prisma.project.findUnique({
       where: { id: projectId },
       include: {
         tasks: { include: taskWithRelationsInclude },
         team: { select: { id: true, name: true, avatar: true } },
+        manager: { select: { id: true, name: true } },
+        creator: { select: { id: true, name: true } },
         changeHistory: { orderBy: { createdAt: "desc" }, take: 20 },
       },
     });
@@ -464,58 +535,71 @@ class ProjectsService {
     }
 
     if (body.teamMemberIds?.length) {
-      const validTeamIds = await this.getManagerTeamIds(user.id);
+      const validTeamIds = await getManagerTeamMemberIds(user.id);
       const invalidMembers = body.teamMemberIds.filter((id) => !validTeamIds.includes(id));
       if (invalidMembers.length > 0) {
         throw apiError("Vous ne pouvez assigner que des membres de votre equipe", 400);
       }
     }
 
-    const project = await prisma.project.create({
-      data: {
-        name: body.name,
-        description: body.description,
-        startDate: body.startDate ? new Date(body.startDate) : null,
-        endDate: body.endDate ? new Date(body.endDate) : null,
-        priority: body.priority || "MEDIUM",
-        managerId: user.id,
-        createdById: user.id,
-        createdByRole: user.role,
-        status: "EN_COURS",
-        team: body.teamMemberIds?.length
-          ? { connect: body.teamMemberIds.map((id) => ({ id })) }
-          : undefined,
-      },
-      include: {
-        tasks: { include: taskWithRelationsInclude },
-        team: { select: { id: true, name: true } },
-      },
-    });
+    const { startDate, endDate } = this.validateProjectDates(body.startDate, body.endDate);
 
-    if (body.teamMemberIds?.length) {
-      await prisma.notification.createMany({
-        data: body.teamMemberIds.map((memberId) => ({
-          employeeId: memberId,
-          title: "Nouveau projet assigne",
-          message: `Vous avez ete assigne au projet "${body.name}"`,
-        })),
+    return prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: {
+          name: body.name,
+          description: body.description,
+          startDate,
+          endDate,
+          priority: body.priority || "MEDIUM",
+          managerId: user.id,
+          createdById: user.id,
+          createdByRole: user.role,
+          status: "EN_COURS",
+          team: body.teamMemberIds?.length
+            ? { connect: body.teamMemberIds.map((id) => ({ id })) }
+            : undefined,
+        },
+        include: {
+          tasks: { include: taskWithRelationsInclude },
+          team: { select: { id: true, name: true } },
+          manager: { select: { id: true, name: true } },
+          creator: { select: { id: true, name: true } },
+          changeHistory: {
+            where: { action: "TRANSFERRED" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
       });
-    }
 
-    logAudit({
-      actorId: user.id,
-      actorName: user.name,
-      action: "CREATED",
-      entity: "Project",
-      entityId: project.id,
-      details: { name: project.name, status: project.status },
+      if (body.teamMemberIds?.length) {
+        await tx.notification.createMany({
+          data: body.teamMemberIds.map((memberId) => ({
+            employeeId: memberId,
+            title: "Nouveau projet assigne",
+            message: `Vous avez ete assigne au projet "${body.name}"`,
+          })),
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          actorName: user.name,
+          action: "CREATED",
+          entity: "Project",
+          entityId: project.id,
+          details: JSON.stringify({ name: project.name, status: project.status }),
+        },
+      });
+
+      return project;
     });
-
-    return project;
   }
 
   async updateProject(user: CurrentUser, projectId: string, body: Record<string, unknown>) {
-    const { project } = await this.assertProjectAccess(user, projectId);
+    const { project } = await assertProjectAccess(user, projectId);
 
     if (user.role !== ROLE.MANAGER && user.role !== ROLE.HR) {
       throw apiError("Acces refuse: seul un chef peut modifier un projet", 403);
@@ -523,6 +607,19 @@ class ProjectsService {
 
     const isRHProject = project.createdByRole === "RH";
     const isOwnProject = project.createdById === user.id;
+    const nextStartDateInput =
+      body.startDate === undefined
+        ? toDateOnlyValue(project.startDate) || null
+        : typeof body.startDate === "string" && body.startDate
+          ? body.startDate
+          : null;
+    const nextEndDateInput =
+      body.endDate === undefined
+        ? toDateOnlyValue(project.endDate) || null
+        : typeof body.endDate === "string" && body.endDate
+          ? body.endDate
+          : null;
+    const validatedProjectDates = this.validateProjectDates(nextStartDateInput, nextEndDateInput);
 
     if (user.role === ROLE.MANAGER && isRHProject && !isOwnProject) {
       const oldValues = JSON.stringify({
@@ -542,34 +639,36 @@ class ProjectsService {
         status: body.status,
       });
 
-      const changeHistory = await prisma.projectChangeHistory.create({
-        data: {
-          projectId,
-          actorId: user.id,
-          actorName: user.name,
-          action: "MODIFICATION",
-          oldValues,
-          newValues,
-          approved: false,
-        },
-      });
-
-      const rhUsers = await prisma.employee.findMany({ where: { role: "RH" } });
-      if (rhUsers.length > 0) {
-        await prisma.notification.createMany({
-          data: rhUsers.map((rh) => ({
-            employeeId: rh.id,
-            title: "Modification en attente d'approbation",
-            message: `${user.name} a demande une modification sur le projet "${project.name}". Veuillez approuver ou rejeter.`,
-          })),
+      return prisma.$transaction(async (tx) => {
+        const changeHistory = await tx.projectChangeHistory.create({
+          data: {
+            projectId,
+            actorId: user.id,
+            actorName: user.name,
+            action: "MODIFICATION",
+            oldValues,
+            newValues,
+            approved: false,
+          },
         });
-      }
 
-      return {
-        message: "Modification soumise pour approbation",
-        changeHistory,
-        requiresApproval: true,
-      };
+        const rhUsers = await tx.employee.findMany({ where: { role: "RH" } });
+        if (rhUsers.length > 0) {
+          await tx.notification.createMany({
+            data: rhUsers.map((rh) => ({
+              employeeId: rh.id,
+              title: "Modification en attente d'approbation",
+              message: `${user.name} a demande une modification sur le projet "${project.name}". Veuillez approuver ou rejeter.`,
+            })),
+          });
+        }
+
+        return {
+          message: "Modification soumise pour approbation",
+          changeHistory,
+          requiresApproval: true,
+        };
+      });
     }
 
     const updateData: {
@@ -589,10 +688,10 @@ class ProjectsService {
       updateData.description = typeof body.description === "string" ? body.description : null;
     }
     if (body.startDate !== undefined) {
-      updateData.startDate = typeof body.startDate === "string" && body.startDate ? new Date(body.startDate) : null;
+      updateData.startDate = typeof body.startDate === "string" && body.startDate ? validatedProjectDates.startDate : null;
     }
     if (body.endDate !== undefined) {
-      updateData.endDate = typeof body.endDate === "string" && body.endDate ? new Date(body.endDate) : null;
+      updateData.endDate = typeof body.endDate === "string" && body.endDate ? validatedProjectDates.endDate : null;
     }
     if (body.priority !== undefined) {
       updateData.priority = String(body.priority);
@@ -606,39 +705,43 @@ class ProjectsService {
       };
     }
 
-    const updatedProject = await prisma.project.update({
-      where: { id: projectId },
-      data: updateData,
-      include: {
-        tasks: { include: taskWithRelationsInclude },
-        team: { select: { id: true, name: true, avatar: true } },
-      },
-    });
+    return prisma.$transaction(async (tx) => {
+      const updatedProject = await tx.project.update({
+        where: { id: projectId },
+        data: updateData,
+        include: {
+          tasks: { include: taskWithRelationsInclude },
+          team: { select: { id: true, name: true, avatar: true } },
+        },
+      });
 
-    await prisma.projectChangeHistory.create({
-      data: {
-        projectId,
-        actorId: user.id,
-        actorName: user.name,
-        action: "MODIFICATION",
-        approved: true,
-      },
-    });
+      await tx.projectChangeHistory.create({
+        data: {
+          projectId,
+          actorId: user.id,
+          actorName: user.name,
+          action: "MODIFICATION",
+          approved: true,
+        },
+      });
 
-    logAudit({
-      actorId: user.id,
-      actorName: user.name,
-      action: "UPDATED",
-      entity: "Project",
-      entityId: projectId,
-      details: { name: updatedProject.name },
-    });
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          actorName: user.name,
+          action: "UPDATED",
+          entity: "Project",
+          entityId: projectId,
+          details: JSON.stringify({ name: updatedProject.name }),
+        },
+      });
 
-    return updatedProject;
+      return updatedProject;
+    });
   }
 
   async deleteProject(user: CurrentUser, projectId: string) {
-    const { project } = await this.assertProjectAccess(user, projectId);
+    const { project } = await assertProjectAccess(user, projectId);
 
     if (user.role !== ROLE.MANAGER && user.role !== ROLE.HR) {
       throw apiError("Acces refuse: seul un chef peut supprimer un projet", 403);
@@ -683,74 +786,85 @@ class ProjectsService {
 
     if (body.action === "APPROVE") {
       const newValues = JSON.parse(change.newValues || "{}") as Record<string, string | null>;
-      const updatedProject = await prisma.project.update({
-        where: { id: projectId },
-        data: {
-          name: newValues.name ?? change.project.name,
-          description: newValues.description ?? change.project.description,
-          startDate: newValues.startDate ? new Date(newValues.startDate) : null,
-          endDate: newValues.endDate ? new Date(newValues.endDate) : null,
-          priority: newValues.priority ?? change.project.priority,
-          status: (newValues.status as ProjectStatus | null) ?? change.project.status,
-        },
-        include: {
-          tasks: true,
-          team: { select: { id: true, name: true } },
-        },
-      });
+      const nextStartDateInput = newValues.startDate ?? toDateOnlyValue(change.project.startDate) ?? null;
+      const nextEndDateInput = newValues.endDate ?? toDateOnlyValue(change.project.endDate) ?? null;
+      const validatedProjectDates = this.validateProjectDates(nextStartDateInput, nextEndDateInput);
+      return prisma.$transaction(async (tx) => {
+        const updatedProject = await tx.project.update({
+          where: { id: projectId },
+          data: {
+            name: newValues.name ?? change.project.name,
+            description: newValues.description ?? change.project.description,
+            startDate: newValues.startDate ? validatedProjectDates.startDate : null,
+            endDate: newValues.endDate ? validatedProjectDates.endDate : null,
+            priority: newValues.priority ?? change.project.priority,
+            status: (newValues.status as ProjectStatus | null) ?? change.project.status,
+          },
+          include: {
+            tasks: true,
+            team: { select: { id: true, name: true } },
+          },
+        });
 
-      await prisma.projectChangeHistory.update({
-        where: { id: body.changeId },
-        data: { approved: true, approvedBy: user.id },
-      });
+        await tx.projectChangeHistory.update({
+          where: { id: body.changeId },
+          data: { approved: true, approvedBy: user.id },
+        });
 
-      await prisma.notification.create({
-        data: {
-          employeeId: change.actorId,
-          title: "Modification approuvee",
-          message: `Votre modification sur le projet "${change.project.name}" a ete approuvee par ${user.name}.${body.comment ? ` Commentaire: ${body.comment}` : ""}`,
-        },
-      });
+        await tx.notification.create({
+          data: {
+            employeeId: change.actorId,
+            title: "Modification approuvee",
+            message: `Votre modification sur le projet "${change.project.name}" a ete approuvee par ${user.name}.${body.comment ? ` Commentaire: ${body.comment}` : ""}`,
+          },
+        });
 
-      logAudit({
-        actorId: user.id,
-        actorName: user.name,
-        action: "APPROVED",
-        entity: "Project",
-        entityId: projectId,
-        details: { changeId: body.changeId, comment: body.comment },
-      });
+        await tx.auditLog.create({
+          data: {
+            actorId: user.id,
+            actorName: user.name,
+            action: "APPROVED",
+            entity: "Project",
+            entityId: projectId,
+            details: JSON.stringify({ changeId: body.changeId, comment: body.comment }),
+          },
+        });
 
-      return {
-        message: "Modification approuvee",
-        project: updatedProject,
-      };
+        return {
+          message: "Modification approuvee",
+          project: updatedProject,
+        };
+      });
     }
 
     if (body.action === "REJECT") {
-      await prisma.projectChangeHistory.update({
-        where: { id: body.changeId },
-        data: { approvedBy: user.id },
-      });
+      return prisma.$transaction(async (tx) => {
+        await tx.projectChangeHistory.update({
+          where: { id: body.changeId },
+          data: { approvedBy: user.id },
+        });
 
-      await prisma.notification.create({
-        data: {
-          employeeId: change.actorId,
-          title: "Modification rejetee",
-          message: `Votre modification sur le projet "${change.project.name}" a ete rejetee par ${user.name}.${body.comment ? ` Raison: ${body.comment}` : ""}`,
-        },
-      });
+        await tx.notification.create({
+          data: {
+            employeeId: change.actorId,
+            title: "Modification rejetee",
+            message: `Votre modification sur le projet "${change.project.name}" a ete rejetee par ${user.name}.${body.comment ? ` Raison: ${body.comment}` : ""}`,
+          },
+        });
 
-      logAudit({
-        actorId: user.id,
-        actorName: user.name,
-        action: "REJECTED",
-        entity: "Project",
-        entityId: projectId,
-        details: { changeId: body.changeId, comment: body.comment },
-      });
+        await tx.auditLog.create({
+          data: {
+            actorId: user.id,
+            actorName: user.name,
+            action: "REJECTED",
+            entity: "Project",
+            entityId: projectId,
+            details: JSON.stringify({ changeId: body.changeId, comment: body.comment }),
+          },
+        });
 
-      return { message: "Modification rejetee" };
+        return { message: "Modification rejetee" };
+      });
     }
 
     throw apiError("Invalid action", 400);
@@ -758,7 +872,7 @@ class ProjectsService {
 
   async generateTasksForProject(user: CurrentUser, projectId: string) {
     const apiKey = await resolveGroqApiKey();
-    const { project, teamIds } = await this.assertProjectAccess(user, projectId);
+    const { project } = await assertProjectAccess(user, projectId);
 
     if (user.role !== ROLE.MANAGER) {
       throw apiError("Acces refuse a ce projet", 403);
@@ -803,8 +917,7 @@ class ProjectsService {
     if (
       !(
         detailedProject.createdById === user.id ||
-        detailedProject.managerId === user.id ||
-        detailedProject.team.some((member) => teamIds.includes(member.id))
+        detailedProject.managerId === user.id
       )
     ) {
       throw apiError("Acces refuse a ce projet", 403);
@@ -817,10 +930,10 @@ class ProjectsService {
     const progress = detailedProject.progress ?? 0;
     const phase =
       progress < 30
-        ? "foundation (setup, architecture, core models)"
+        ? "demarrage (socle technique, architecture, modeles coeur)"
         : progress < 70
-          ? "mid (features, integrations, UI)"
-          : "late (testing, bug fixes, optimization, deployment)";
+          ? "milieu (fonctionnalites, integrations, interface)"
+          : "finalisation (tests, corrections, optimisation, mise en production)";
 
     const today = new Date();
     const processedTeamMembers: ProcessedTeamMember[] = detailedProject.team.map((member) => {
@@ -850,38 +963,41 @@ class ProjectsService {
     const maxPerPerson = Math.max(1, Math.ceil(Math.min(activeMembers.length * 2, 10) * 0.4));
     const totalTasks = Math.max(activeMembers.length, Math.min(activeMembers.length * 2, 10));
 
-    const systemPrompt = `You are a project task assignment engine. Return ONLY a valid JSON array, no markdown, no explanation, no code blocks.
+    const systemPrompt = `Tu es un moteur de generation et d'affectation de taches projet.
+Tu dois repondre UNIQUEMENT en FRANCAIS.
+Retourne UNIQUEMENT un tableau JSON valide, sans markdown, sans explication et sans bloc de code.
 
-STRICT RULES:
-1. NEVER repeat or rephrase existing tasks - read them carefully
-2. ALL active members must receive at least 1 task - no active member left without work
-3. Max tasks per person: ${maxPerPerson} (strict cap, never exceed this for any single member)
-4. SKILL MATCHING: for each task, find the best skill match. If that member is ACTIVE -> assign to them. If that member is "en_conge" -> assign to the NEXT best match instead, set comment to "Better fit: [unavailable member name] ([skill] level [X]/5) but they are currently on leave"
-5. If NO suitable active member exists, assign to least busy member and note it in comment
-6. Each generation must approach from a DIFFERENT angle - if existing tasks cover backend, focus new tasks on frontend, testing, docs, DevOps, etc.
-7. Use project phase strictly - do not generate tasks irrelevant to current phase
-8. Generate a FULL WORKLOAD PLAN for the team, not a single task
-9. Mention the main skill and level that justify the assignee in each comment
-10. Balance the workload fairly across the team`;
+REGLES STRICTES :
+1. Ne repete jamais et ne reformule jamais les taches existantes.
+2. Tous les membres actifs doivent recevoir au moins 1 tache.
+3. Nombre maximum de taches par personne : ${maxPerPerson}. Ne jamais depasser cette limite.
+4. Pour chaque tache, cherche le meilleur match de competences. Si cette personne est ACTIVE, assigne-lui la tache. Si elle est en_conge, assigne la tache au meilleur profil actif suivant et indique-le clairement en francais dans le commentaire.
+5. Si aucun profil actif n'est evident, assigne la tache a la personne active la moins chargee et explique-le en francais dans le commentaire.
+6. Chaque generation doit adopter un angle different. Si les taches existantes couvrent deja un domaine, propose autre chose utile au projet.
+7. Respecte strictement la phase du projet.
+8. Genere un vrai plan de charge d'equipe, pas une seule tache.
+9. Dans chaque commentaire, mentionne la competence principale et le niveau qui justifient l'affectation.
+10. Tout le contenu retourne doit etre en francais : titres, descriptions, commentaires et formulations.
+11. N'utilise pas d'anglais sauf pour des noms techniques indispensables comme React, Node.js ou PostgreSQL.`;
 
-    const userPrompt = `Project: ${detailedProject.name}
-Description: ${detailedProject.description}
-Start: ${detailedProject.startDate ? new Date(detailedProject.startDate).toISOString() : "Non definie"} | End: ${detailedProject.endDate ? new Date(detailedProject.endDate).toISOString() : "Non definie"}
-Progress: ${progress}% - Phase: ${phase}
+    const userPrompt = `Projet : ${detailedProject.name}
+Description : ${detailedProject.description}
+Debut : ${detailedProject.startDate ? new Date(detailedProject.startDate).toISOString() : "Non definie"} | Fin : ${detailedProject.endDate ? new Date(detailedProject.endDate).toISOString() : "Non definie"}
+Progression : ${progress}% - Phase : ${phase}
 
-EXISTING TASKS - DO NOT repeat or rephrase any:
-${detailedProject.tasks.map((task) => `- [${task.status}] ${task.title}`).join("\n") || "none yet"}
+TACHES EXISTANTES - ne pas les repeter ni les reformuler :
+${detailedProject.tasks.map((task) => `- [${task.status}] ${task.title}`).join("\n") || "aucune pour le moment"}
 
-ACTIVE members (assign tasks to these people):
-${activeMembers.map((member) => `- id: ${member.id} | name: ${member.name} | title: ${member.jobTitle} | skills: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "general"}`).join("\n")}
+MEMBRES ACTIFS (les taches doivent etre assignees a ces personnes) :
+${activeMembers.map((member) => `- id: ${member.id} | nom: ${member.name} | poste: ${member.jobTitle} | competences: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "generaliste"}`).join("\n")}
 
-UNAVAILABLE members (do NOT assign to these - reference them in comments only):
-${unavailableMembers.map((member) => `- name: ${member.name} | skills: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "general"} | status: ${member.status}`).join("\n") || "none"}
+MEMBRES INDISPONIBLES (ne pas leur assigner de tache, les mentionner seulement dans les commentaires si utile) :
+${unavailableMembers.map((member) => `- nom: ${member.name} | competences: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "generaliste"} | statut: ${member.status}`).join("\n") || "aucun"}
 
-Generate exactly ${totalTasks} tasks. Max ${maxPerPerson} tasks per person. Every active member must get at least 1 task.
-The tasks must be distributed across the team, balanced by current workload and matched to skill levels.
+Genere exactement ${totalTasks} taches. Maximum ${maxPerPerson} taches par personne. Chaque membre actif doit recevoir au moins 1 tache.
+Les taches doivent etre reparties de facon equilibree selon la charge actuelle et le niveau de competences.
 
-Return ONLY this JSON array:
+Retourne UNIQUEMENT ce tableau JSON :
 [
   {
     "title": string,
@@ -927,6 +1043,10 @@ Return ONLY this JSON array:
         }
 
         generatedTasks = parseAiTasks(text) as PreviewTask[];
+
+        if (hasTooMuchEnglishInGeneratedTasks(generatedTasks)) {
+          throw apiError("La reponse IA contient trop d'anglais. Une suggestion locale a ete utilisee.", 422);
+        }
       } catch (error) {
         const groqError = error as { status?: number; code?: string; message?: string };
         generationMode = "fallback";
@@ -935,6 +1055,8 @@ Return ONLY this JSON array:
           groqError.code === "invalid_api_key" ||
           groqError.message?.includes("Invalid API Key")
             ? "La cle API Groq est invalide. Une suggestion locale a ete utilisee."
+            : groqError.message?.includes("contient trop d'anglais")
+              ? "La reponse IA etait majoritairement en anglais. Une suggestion locale en francais a ete utilisee."
             : "Le service IA est indisponible. Une suggestion locale a ete utilisee.";
         generatedTasks = buildFallbackTasks({
           project: detailedProject,
@@ -978,6 +1100,8 @@ Return ONLY this JSON array:
       if (!validUser) {
         throw apiError(`Utilisateur invalide assigne: ${task.assignedUserId}`, 422);
       }
+
+      validateTaskDueDateForProject(task.dueDate, detailedProject);
     }
 
     return {
@@ -994,64 +1118,82 @@ Return ONLY this JSON array:
       throw apiError("Aucune tache a sauvegarder", 400);
     }
 
-    const { project, teamIds } = await this.assertProjectAccess(user, projectId);
+    const { project } = await assertProjectAccess(user, projectId);
     if (
       user.role !== ROLE.MANAGER ||
       !(
         project.createdById === user.id ||
-        project.managerId === user.id ||
-        project.team.some((member) => teamIds.includes(member.id))
+        project.managerId === user.id
       )
     ) {
       throw apiError("Acces refuse a ce projet", 403);
     }
 
-    const createdTasks = await Promise.all(
-      tasks.map((task) =>
-        prisma.task.create({
-          data: {
-            title: task.title,
-            description: task.description,
-            assigneeId: task.assignedUserId,
-            projectId,
-            dueDate: new Date(task.dueDate),
-            priority: task.priority,
-            status: "TODO",
-          },
-        }),
-      ),
-    );
+    const taskData = tasks.map((task) => ({
+      title: task.title,
+      description: task.description,
+      assigneeId: task.assignedUserId,
+      projectId,
+      dueDate: validateTaskDueDateForProject(task.dueDate, project),
+      priority: task.priority,
+      status: "TODO" as const,
+    }));
 
-    const assigneeIds = [...new Set(tasks.map((task) => task.assignedUserId))];
-    await Promise.all(
-      assigneeIds.map(async (assigneeId) => {
+    return prisma.$transaction(async (tx) => {
+      await tx.task.createMany({
+        data: taskData,
+      });
+
+      const notificationsByAssignee = [...new Set(tasks.map((task) => task.assignedUserId))].map((assigneeId) => {
         const assigneeTasks = tasks.filter((task) => task.assignedUserId === assigneeId);
         const taskTitles = assigneeTasks.map((task) => `"${task.title}"`).join(", ");
 
-        await prisma.notification.create({
-          data: {
-            employeeId: assigneeId,
-            title: "Nouvelles taches assignees par IA",
-            message: `${assigneeTasks.length} tache(s) vous a/ont ete assignee(s) dans le projet "${project.name}": ${taskTitles}`,
-          },
+        return {
+          employeeId: assigneeId,
+          title: "Nouvelles taches assignees",
+          message: `${user.name} vous a assigne ${assigneeTasks.length} tache(s) dans le projet "${project.name}" : ${taskTitles}`,
+        };
+      });
+
+      if (notificationsByAssignee.length > 0) {
+        await tx.notification.createMany({
+          data: notificationsByAssignee,
         });
-      }),
-    );
+      }
 
-    const allTasks = await prisma.task.findMany({ where: { projectId } });
-    const completedTasks = allTasks.filter((task) => task.status === "DONE").length;
-    const progress = allTasks.length > 0 ? Math.round((completedTasks / allTasks.length) * 100) : 0;
+      const allTasks = await tx.task.findMany({ where: { projectId } });
+      const completedTasks = allTasks.filter((task) => task.status === "DONE").length;
+      const progress = allTasks.length > 0 ? Math.round((completedTasks / allTasks.length) * 100) : 0;
+      const status =
+        allTasks.length === 0
+          ? "EN_ATTENTE"
+          : completedTasks === allTasks.length
+            ? "TERMINE"
+            : "EN_COURS";
 
-    await prisma.project.update({
-      where: { id: projectId },
-      data: { progress },
+      await tx.project.update({
+        where: { id: projectId },
+        data: { progress, status },
+      });
+
+      const createdTasks = await tx.task.findMany({
+        where: {
+          projectId,
+          OR: taskData.map((task) => ({
+            title: task.title,
+            assigneeId: task.assigneeId,
+          })),
+        },
+        orderBy: { createdAt: "desc" },
+        take: taskData.length,
+      });
+
+      return {
+        success: true,
+        tasks: createdTasks,
+        message: `${createdTasks.length} tache(s) creee(s) avec succes`,
+      };
     });
-
-    return {
-      success: true,
-      tasks: createdTasks,
-      message: `${createdTasks.length} tache(s) creee(s) avec succes`,
-    };
   }
 }
 

@@ -1,19 +1,28 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ROLE } from '@/lib/constants'
+import { ROLE, TASK_STATUS } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { cn } from '@/lib/utils'
+import { getBonusReasonLabel } from '@/lib/payslip'
+import { formatSalaryGradeLabel } from '@/lib/utils/salary-grade'
 import { useRouter } from 'next/navigation'
+import {
+  fetchEmployeeBonuses,
+  fetchEmployeeDetails,
+  fetchEmployeeEvaluations,
+  fetchEmployeeSalary,
+  fetchEmployeesList,
+  fetchTeamTasks,
+} from '@/lib/services/client/employees.service'
+import { fetchEmployeeSkills } from '@/lib/services/client/skills.service'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrandedLoading } from '@/components/ui/spinner'
-import { useToast } from '@/hooks/use-toast'
 import {
   Briefcase,
   Coins,
@@ -35,6 +44,7 @@ interface Employee {
   avatar: string | null
   onLeave?: boolean
   pendingReviewCount?: number
+  managerId?: string | null
 }
 
 function formatAmount(amount: number | null | undefined) {
@@ -70,8 +80,8 @@ function getMemberCardClass(onLeave?: boolean) {
 export default function MonEquipePage() {
   const { user, isLoading: authLoading } = useCurrentUser()
   const router = useRouter()
-  const { toast } = useToast()
   const [team, setTeam] = useState<Employee[]>([])
+  const [teamManagers, setTeamManagers] = useState<Array<{ id: string; name: string }>>([])
   const [loading, setLoading] = useState(true)
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -83,28 +93,24 @@ export default function MonEquipePage() {
   const [skills, setSkills] = useState<any[]>([])
   const [modalLoading, setModalLoading] = useState(false)
   const [modalError, setModalError] = useState('')
+  const [selectedTeamFilter, setSelectedTeamFilter] = useState('all')
 
-  const [isBonusModalOpen, setIsBonusModalOpen] = useState(false)
-  const [bonusAmount, setBonusAmount] = useState('')
-  const [bonusReason, setBonusReason] = useState('')
-  const [bonusPeriod, setBonusPeriod] = useState('')
-  const [bonusSubmitting, setBonusSubmitting] = useState(false)
-  const [bonusError, setBonusError] = useState('')
+  const isRhView = user?.role === ROLE.HR
 
   useEffect(() => {
-    if (!authLoading && user && user.role !== ROLE.MANAGER) {
+    if (!authLoading && user && user.role !== ROLE.MANAGER && user.role !== ROLE.HR) {
       router.push('/dashboard')
     }
   }, [authLoading, router, user])
 
   useEffect(() => {
-    if (user?.role === ROLE.MANAGER) {
+    if (user?.role === ROLE.MANAGER || user?.role === ROLE.HR) {
       void fetchTeam()
     }
   }, [user])
 
   useEffect(() => {
-    if (user?.role !== ROLE.MANAGER) {
+    if (user?.role !== ROLE.MANAGER && user?.role !== ROLE.HR) {
       return
     }
 
@@ -129,13 +135,17 @@ export default function MonEquipePage() {
   const fetchTeam = async () => {
     try {
       setLoading(true)
-      const res = await fetch('/api/employees')
-      if (res.ok) {
-        const members: any[] = await res.json()
-        const tasksRes = await fetch('/api/tasks?excludeStatus=DONE')
-        const allTasks = tasksRes.ok ? await tasksRes.json() : []
+      const { data: members = [] } = await fetchEmployeesList()
+      const { data: allTasks = [] } = await fetchTeamTasks(`?excludeStatus=${TASK_STATUS.DONE}`)
+        const managerOptions = members
+          .filter((member: any) => member.role === ROLE.MANAGER)
+          .map((member: any) => ({ id: member.id, name: member.name }))
 
-        const enhancedTeam = members.map((member: any) => {
+        const visibleMembers = user?.role === ROLE.HR
+          ? members.filter((member: any) => member.role === ROLE.EMPLOYEE)
+          : members
+
+        const enhancedTeam = visibleMembers.map((member: any) => {
           const pendingReviewCount = allTasks.filter(
             (task: any) => task.assigneeId === member.id && task.status === 'IN_REVIEW',
           ).length
@@ -143,11 +153,10 @@ export default function MonEquipePage() {
         })
 
         setTeam(enhancedTeam)
-      } else {
-        setTeam([])
-      }
+        setTeamManagers(managerOptions)
     } catch {
       setTeam([])
+      setTeamManagers([])
     } finally {
       setLoading(false)
     }
@@ -166,31 +175,28 @@ export default function MonEquipePage() {
     setSkills([])
 
     try {
-      const responses = await Promise.all([
-        fetch(`/api/employees/${employee.id}`),
-        fetch(`/api/employees/${employee.id}/salary`),
-        fetch(`/api/employees/${employee.id}/bonuses`),
-        fetch(`/api/tasks?assigneeId=${employee.id}&excludeStatus=DONE`),
-        fetch(`/api/evaluations?employeeId=${employee.id}`),
-        fetch(`/api/employees/${employee.id}/skills`),
-      ])
+      const requests: Promise<unknown>[] = [
+        fetchEmployeeDetails(employee.id),
+        fetchTeamTasks(`?assigneeId=${employee.id}`),
+        fetchEmployeeEvaluations(employee.id),
+        fetchEmployeeSkills(employee.id),
+      ]
 
-      const [detailRes, salaryRes, bonusesRes, tasksRes, evalsRes, skillsRes] = responses
+      if (isRhView) {
+        requests.splice(1, 0, fetchEmployeeSalary(employee.id), fetchEmployeeBonuses(employee.id))
+      }
 
-      const [detail, salary, bonusList, taskList, evalList, skillList] = await Promise.all([
-        detailRes.ok ? detailRes.json() : null,
-        salaryRes.ok ? salaryRes.json() : null,
-        bonusesRes.ok ? bonusesRes.json() : [],
-        tasksRes.ok ? tasksRes.json() : [],
-        evalsRes.ok ? evalsRes.json() : [],
-        skillsRes.ok ? skillsRes.json() : { skills: [] },
-      ])
+      const responses = await Promise.all(requests)
+      const [detail, salary, bonusList, taskList, evalList, skillList] = isRhView
+        ? responses
+        : [responses[0], null, [], responses[1], responses[2], responses[3]]
+      const { data: employeeTasks = [] } = (taskList as { data?: any[] }) ?? {}
 
       setEmployeeDetail(detail)
       setSalaryData(salary)
-      setBonuses(bonusList || [])
-      setTasks(taskList || [])
-      setEvaluations(evalList || [])
+      setBonuses(Array.isArray(bonusList) ? bonusList : [])
+      setTasks(Array.isArray(employeeTasks) ? employeeTasks : [])
+      setEvaluations(Array.isArray(evalList) ? evalList : [])
       setSkills((skillList as any)?.skills || [])
     } catch {
       setModalError('Impossible de charger les details du collaborateur')
@@ -199,68 +205,26 @@ export default function MonEquipePage() {
     }
   }
 
-  const openBonusModal = () => {
-    setBonusAmount('')
-    setBonusReason('')
-    setBonusPeriod('')
-    setBonusError('')
-    setIsBonusModalOpen(true)
-  }
+  const teamFilterOptions = useMemo(() => {
+    if (!isRhView) return []
+    return teamManagers.map((manager) => ({ id: manager.id, label: manager.name }))
+  }, [isRhView, teamManagers])
 
-  const submitExceptionalBonus = async () => {
-    if (!selectedEmployee) return
-
-    setBonusError('')
-    const parsedAmount = Number(bonusAmount)
-
-    if (Number.isNaN(parsedAmount) || parsedAmount <= 0 || !bonusReason.trim()) {
-      setBonusError('Le montant doit etre valide et la raison est obligatoire')
-      return
+  const displayedTeam = useMemo(() => {
+    if (!isRhView || selectedTeamFilter === 'all') {
+      return team
     }
 
-    setBonusSubmitting(true)
+    return team.filter((member) => member.managerId === selectedTeamFilter)
+  }, [isRhView, selectedTeamFilter, team])
 
-    try {
-      const res = await fetch('/api/bonuses/exceptional', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employeeId: selectedEmployee.id,
-          amount: parsedAmount,
-          reason: bonusReason.trim(),
-          period: bonusPeriod.trim() || undefined,
-        }),
-      })
-
-      if (res.ok) {
-        const bonusesRes = await fetch(`/api/employees/${selectedEmployee.id}/bonuses`)
-        const updatedBonuses = bonusesRes.ok ? await bonusesRes.json() : []
-        setBonuses(updatedBonuses || [])
-        setIsBonusModalOpen(false)
-
-        toast({
-          description: 'Bonus exceptionnel ajoute avec succes',
-          className: 'bg-[#10B981] text-white border-none',
-          duration: 3000,
-        })
-      } else {
-        const data = await res.json().catch(() => null)
-        setBonusError(data?.error || "Erreur lors de l'ajout du bonus")
-      }
-    } catch {
-      setBonusError('Erreur de connexion')
-    } finally {
-      setBonusSubmitting(false)
-    }
-  }
-
-  const activeCount = useMemo(
-    () => team.filter((member) => !member.onLeave).length,
-    [team],
+  const displayedActiveCount = useMemo(
+    () => displayedTeam.filter((member) => !member.onLeave).length,
+    [displayedTeam],
   )
-  const onLeaveCount = useMemo(
-    () => team.filter((member) => member.onLeave).length,
-    [team],
+  const displayedOnLeaveCount = useMemo(
+    () => displayedTeam.filter((member) => member.onLeave).length,
+    [displayedTeam],
   )
 
   if (authLoading || loading) {
@@ -271,23 +235,47 @@ export default function MonEquipePage() {
     )
   }
 
-  if (!user || user.role !== ROLE.MANAGER) {
+  if (!user || (user.role !== ROLE.MANAGER && user.role !== ROLE.HR)) {
     return null
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
+        <div className="space-y-4">
           <h1 className="text-3xl font-bold" style={{ color: 'var(--color-text)' }}>
-            Mon Equipe
+            {isRhView ? 'Equipes collaborateurs' : 'Mon Equipe'}
           </h1>
           <p className="mt-1 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            Suivez votre equipe, consultez les profils et accordez des bonus exceptionnels.
+            {isRhView
+              ? 'Consultez les equipes, filtrez par chef et accedez aux details RH des collaborateurs.'
+              : 'Suivez votre equipe et consultez les profils de vos collaborateurs.'}
           </p>
+
+          {isRhView ? (
+            <div className="w-full lg:max-w-sm">
+              <p className="mb-2 text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                Filtrer par equipe
+              </p>
+              <Select value={selectedTeamFilter} onValueChange={setSelectedTeamFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Toutes les equipes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes les equipes</SelectItem>
+                  {teamFilterOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      Equipe de {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="flex flex-col gap-3 lg:items-end">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Card className="min-w-[11rem] border-slate-200 bg-white/90 shadow-sm dark:border-slate-700 dark:bg-slate-900/90">
             <CardContent className="flex items-center gap-3 p-4">
               <div className="rounded-xl bg-blue-50 p-2 text-blue-700">
@@ -295,7 +283,7 @@ export default function MonEquipePage() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Membres</p>
-                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">{team.length}</p>
+                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">{displayedTeam.length}</p>
               </div>
             </CardContent>
           </Card>
@@ -307,7 +295,7 @@ export default function MonEquipePage() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Actifs</p>
-                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">{activeCount}</p>
+                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">{displayedActiveCount}</p>
               </div>
             </CardContent>
           </Card>
@@ -319,28 +307,33 @@ export default function MonEquipePage() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">En conge</p>
-                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">{onLeaveCount}</p>
+                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">{displayedOnLeaveCount}</p>
               </div>
             </CardContent>
           </Card>
         </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {team.length === 0 ? (
+        {displayedTeam.length === 0 ? (
           <Card className="col-span-full border-dashed">
             <CardContent className="flex min-h-[16rem] flex-col items-center justify-center gap-3 p-8 text-center">
               <Users className="h-10 w-10 text-slate-300 dark:text-slate-600" />
               <div>
-                <p className="font-medium text-slate-900 dark:text-slate-100">Aucun membre dans votre equipe</p>
+                <p className="font-medium text-slate-900 dark:text-slate-100">
+                  {isRhView ? 'Aucun collaborateur pour ce filtre' : 'Aucun membre dans votre equipe'}
+                </p>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Les collaborateurs affectes a votre equipe apparaitront ici.
+                  {isRhView
+                    ? 'Selectionnez une autre equipe ou attendez de nouvelles affectations.'
+                    : 'Les collaborateurs affectes a votre equipe apparaitront ici.'}
                 </p>
               </div>
             </CardContent>
           </Card>
         ) : (
-          team.map((member) => (
+          displayedTeam.map((member) => (
             <Card
               key={member.id}
               className={cn(
@@ -429,7 +422,7 @@ export default function MonEquipePage() {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.9fr)]">
+                  <div className={cn('grid gap-4', isRhView ? 'lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,0.9fr)]' : 'grid-cols-1')}>
                     <Card className="border-slate-200 shadow-sm dark:border-slate-700 dark:bg-slate-900">
                       <CardContent className="space-y-5 p-5">
                         <div className="flex items-start gap-4">
@@ -483,82 +476,86 @@ export default function MonEquipePage() {
                       </CardContent>
                     </Card>
 
-                    <Card className="border-slate-200 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-                      <CardContent className="space-y-4 p-5">
-                        <div className="flex items-center gap-2">
-                          <Coins className="h-4 w-4 text-[#1B3A6B]" />
-                          <h4 className="font-semibold text-slate-900 dark:text-slate-100">Remuneration</h4>
-                        </div>
+                    {isRhView ? (
+                      <Card className="border-slate-200 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                        <CardContent className="space-y-4 p-5">
+                          <div className="flex items-center gap-2">
+                            <Coins className="h-4 w-4 text-[#1B3A6B]" />
+                            <h4 className="font-semibold text-slate-900 dark:text-slate-100">Remuneration</h4>
+                          </div>
 
-                        {salaryData ? (
-                          <div className="space-y-3 text-sm">
-                            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
-                              <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Grade</p>
-                              <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">
-                                {salaryData.grade?.role || '-'} - Niveau {salaryData.grade?.level || '-'}
-                              </p>
-                            </div>
-                            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
-                              <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Salaire de base</p>
-                              <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">{formatAmount(salaryData.baseSalary)}</p>
-                            </div>
-                            {salaryData.salaryOverride ? (
-                              <div className="rounded-xl bg-amber-50 p-4">
-                                <p className="text-xs uppercase tracking-wide text-amber-700/70">Salaire individuel</p>
-                                <p className="mt-1 font-medium text-amber-900">
-                                  {formatAmount(salaryData.salaryOverride)}
+                          {salaryData ? (
+                            <div className="space-y-3 text-sm">
+                              <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
+                                <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Grade</p>
+                                <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">
+                                  {salaryData.grade ? formatSalaryGradeLabel(salaryData.grade) : '-'}
                                 </p>
                               </div>
-                            ) : null}
-                            <div className="rounded-xl bg-[#1B3A6B] p-4 text-white">
-                              <p className="text-xs uppercase tracking-wide text-white/70">Salaire effectif</p>
-                              <p className="mt-1 text-lg font-semibold">
-                                {formatAmount(salaryData.resolvedSalary)}
-                              </p>
+                              <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
+                                <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Salaire de base</p>
+                                <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">{formatAmount(salaryData.baseSalary)}</p>
+                              </div>
+                              {salaryData.salaryOverride ? (
+                                <div className="rounded-xl bg-amber-50 p-4">
+                                  <p className="text-xs uppercase tracking-wide text-amber-700/70">Salaire individuel</p>
+                                  <p className="mt-1 font-medium text-amber-900">
+                                    {formatAmount(salaryData.salaryOverride)}
+                                  </p>
+                                </div>
+                              ) : null}
+                              <div className="rounded-xl bg-[#1B3A6B] p-4 text-white">
+                                <p className="text-xs uppercase tracking-wide text-white/70">Salaire effectif</p>
+                                <p className="mt-1 text-lg font-semibold">
+                                  {formatAmount(salaryData.resolvedSalary)}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-500 dark:text-slate-400">Aucune information salariale disponible.</p>
-                        )}
-                      </CardContent>
-                    </Card>
+                          ) : (
+                            <p className="text-sm text-slate-500 dark:text-slate-400">Aucune information salariale disponible.</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ) : null}
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <Card className="border-slate-200 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-                      <CardContent className="space-y-4 p-5">
-                        <div className="flex items-center gap-2">
-                          <Gift className="h-4 w-4 text-[#1B3A6B]" />
-                          <h4 className="font-semibold text-slate-900 dark:text-slate-100">Historique des bonus</h4>
-                        </div>
-
-                        {bonuses.length > 0 ? (
-                          <div className="space-y-3">
-                            {bonuses.slice(0, 6).map((bonus: any) => (
-                              <div
-                                key={bonus.id}
-                                className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800"
-                              >
-                                <div className="min-w-0">
-                                  <Badge variant="outline" className="mb-2">{bonus.type}</Badge>
-                                  <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                                    {bonus.reason || 'Bonus exceptionnel'}
-                                  </p>
-                                  {bonus.period && (
-                                    <p className="text-xs text-slate-500 dark:text-slate-400">Periode: {bonus.period}</p>
-                                  )}
-                                </div>
-                                <div className="text-right text-sm font-semibold text-slate-900 dark:text-slate-100">
-                                  {formatAmount(bonus.amount)}
-                                </div>
-                              </div>
-                            ))}
+                  <div className={cn('grid gap-4', isRhView ? 'lg:grid-cols-2' : 'lg:grid-cols-1')}>
+                    {isRhView ? (
+                      <Card className="border-slate-200 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                        <CardContent className="space-y-4 p-5">
+                          <div className="flex items-center gap-2">
+                            <Gift className="h-4 w-4 text-[#1B3A6B]" />
+                            <h4 className="font-semibold text-slate-900 dark:text-slate-100">Historique des bonus</h4>
                           </div>
-                        ) : (
-                          <p className="text-sm text-slate-500 dark:text-slate-400">Aucun bonus enregistre.</p>
-                        )}
-                      </CardContent>
-                    </Card>
+
+                          {bonuses.length > 0 ? (
+                            <div className="space-y-3">
+                              {bonuses.slice(0, 6).map((bonus: any) => (
+                                <div
+                                  key={bonus.id}
+                                  className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800"
+                                >
+                                  <div className="min-w-0">
+                                    <Badge variant="outline" className="mb-2">{bonus.type}</Badge>
+                                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                      {getBonusReasonLabel(bonus.reason, bonus.type)}
+                                    </p>
+                                    {bonus.period && (
+                                      <p className="text-xs text-slate-500 dark:text-slate-400">Periode: {bonus.period}</p>
+                                    )}
+                                  </div>
+                                  <div className="text-right text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                    {formatAmount(bonus.amount)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-500 dark:text-slate-400">Aucun bonus enregistre.</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ) : null}
 
                     <Card className="border-slate-200 shadow-sm dark:border-slate-700 dark:bg-slate-900">
                       <CardContent className="space-y-4 p-5">
@@ -584,7 +581,7 @@ export default function MonEquipePage() {
                             <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Taches actives</p>
                             <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{tasks.length}</p>
                             <p className="text-xs text-slate-500 dark:text-slate-400">
-                              {tasks.filter((task) => task.status === 'IN_REVIEW').length} en revue
+                              {tasks.filter((task) => task.status === TASK_STATUS.IN_REVIEW).length} en revue
                             </p>
                           </div>
                         </div>
@@ -598,13 +595,32 @@ export default function MonEquipePage() {
                                   key={task.id}
                                   className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800/60"
                                 >
-                                  <span className="truncate text-slate-700 dark:text-slate-200">{task.title}</span>
+                                  <div className="min-w-0">
+                                    <span className="truncate text-slate-700 dark:text-slate-200">{task.title}</span>
+                                    {typeof task.taskScore === 'number' ? (
+                                      <p className="mt-1 text-xs text-violet-600 dark:text-violet-300">
+                                        Note: {task.taskScore}/10
+                                      </p>
+                                    ) : null}
+                                    {task.reviewComment ? (
+                                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        Commentaire: {task.reviewComment}
+                                      </p>
+                                    ) : null}
+                                    {task.status === TASK_STATUS.DONE && task.deliverableNote ? (
+                                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        Note du livrable: {task.deliverableNote}
+                                      </p>
+                                    ) : null}
+                                  </div>
                                   <Badge
                                     variant="outline"
                                     className={
                                       task.status === 'IN_REVIEW'
                                         ? 'border-amber-200 bg-amber-50 text-amber-700'
-                                        : 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                        : task.status === TASK_STATUS.DONE
+                                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                          : 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
                                     }
                                   >
                                     {task.status}
@@ -640,79 +656,10 @@ export default function MonEquipePage() {
                       )}
                     </CardContent>
                   </Card>
-
-                  <div className="flex justify-end">
-                    <Button className="bg-[#1B3A6B] hover:bg-[#15305a]" onClick={openBonusModal}>
-                      Donner un bonus exceptionnel
-                    </Button>
-                  </div>
                 </div>
               )}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isBonusModalOpen} onOpenChange={setIsBonusModalOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Donner un bonus exceptionnel</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-              <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Collaborateur</p>
-              <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">{selectedEmployee?.name}</p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Montant (TND) *</label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={bonusAmount}
-                  onChange={(e) => setBonusAmount(e.target.value)}
-                  placeholder="1500"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Periode</label>
-                <Input
-                  value={bonusPeriod}
-                  onChange={(e) => setBonusPeriod(e.target.value)}
-                  placeholder="2026-Q2"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Raison *</label>
-              <Textarea
-                rows={4}
-                value={bonusReason}
-                onChange={(e) => setBonusReason(e.target.value)}
-                placeholder="Excellente contribution sur le projet..."
-              />
-            </div>
-
-            {bonusError ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {bonusError}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setIsBonusModalOpen(false)} disabled={bonusSubmitting}>
-              Annuler
-            </Button>
-            <Button onClick={submitExceptionalBonus} disabled={bonusSubmitting} className="bg-[#1B3A6B] hover:bg-[#15305a]">
-              {bonusSubmitting ? 'Envoi...' : 'Valider le bonus'}
-            </Button>
-          </div>
         </DialogContent>
       </Dialog>
     </div>

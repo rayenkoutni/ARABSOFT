@@ -3,7 +3,9 @@ import { Geist, Geist_Mono, Plus_Jakarta_Sans } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { AuthProvider, NotificationProvider } from '@/lib'
 import { Toaster } from '@/components/ui/sonner'
+import { initCron } from '@/lib/cron'
 import '@/lib/cron/monthly-evaluation' // registers the monthly evaluation cron job
+import '@/lib/cron/annual-bonus' // registers the annual bonus cron job
 import './globals.css'
 
 // export const runtime = "nodejs"
@@ -11,6 +13,8 @@ import './globals.css'
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 const _plusJakarta = Plus_Jakarta_Sans({ subsets: ["latin"], variable: '--font-plus-jakarta' });
+
+initCron()
 
 export const metadata: Metadata = {
   title: 'HR Portal - Request Management',

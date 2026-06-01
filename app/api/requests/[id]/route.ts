@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { requestInputSchema } from "@/lib/request-validation"
+import { requestInputSchema } from "@/lib/validators/request.validators"
 import { ApiError, handleApiError } from "@/lib/api-response"
 import { serverAuthService } from "@/lib/services/server/auth.service"
 import { requestServerService } from "@/lib/services/server/request.service"
@@ -35,5 +35,19 @@ export async function PUT(
     return NextResponse.json(updatedRequest)
   } catch (error) {
     return handleApiError(error, "Failed to update request")
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const user = await serverAuthService.requireAuth(req)
+    const { id } = await params
+    await requestServerService.deleteDraftRequestForUser(id, user)
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    return handleApiError(error, "Failed to delete request")
   }
 }

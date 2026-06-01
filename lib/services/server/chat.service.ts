@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/services/prisma.service';
 import { kafkaService } from '@/lib/services/server/kafka.service';
 import { socketService } from '@/lib/services/server/socket.service';
-import { notificationServerService } from '@/lib/services/server/notification.service';
 import { KAFKA } from '@/lib/constants';
 import type { CurrentUser } from '@/lib/services/server/auth.service';
 import { AppError } from '@/lib/errors';
@@ -53,13 +52,6 @@ class ChatService {
       // Emit to sender's other sockets
       socketService.emitToUser(senderId, 'message_sent', savedMessage);
 
-      // Create notification for recipient
-      await notificationServerService.createNotification(
-        recipientId,
-        '[CHAT] Nouveau message',
-        `${savedMessage.sender.name}: ${savedMessage.content.substring(0, 100)}${savedMessage.content.length > 100 ? '...' : ''}`
-      );
-
     } catch (error) {
       throw error;
     }
@@ -105,23 +97,40 @@ class ChatService {
             },
           },
         },
+        _count: {
+          select: {
+            messages: true,
+          },
+        },
       },
       orderBy: { updatedAt: 'desc' },
     });
 
-    return Promise.all(
-      conversations.map(async (conversation) => {
-        const unreadCount = await prisma.message.count({
-          where: {
-            conversationId: conversation.id,
-            senderId: { not: user.id },
-            reads: {
-              none: {
-                employeeId: user.id,
-              },
-            },
+    const unreadCounts = await prisma.message.groupBy({
+      by: ["conversationId"],
+      where: {
+        conversationId: { in: conversations.map((conversation) => conversation.id) },
+        senderId: { not: user.id },
+        reads: {
+          none: {
+            employeeId: user.id,
           },
-        });
+        },
+      },
+      _count: {
+        _all: true,
+      },
+    });
+    const unreadCountsByConversation = new Map<string, number>();
+    for (const item of unreadCounts) {
+      unreadCountsByConversation.set(item.conversationId, item._count._all);
+    }
+
+    const mappedConversations = await Promise.all(
+      conversations.map(async (conversation) => {
+        if (conversation.type === "PRIVATE" && !conversation.participants.some((participant) => participant.id !== user.id)) {
+          return null;
+        }
 
         const lastMessage = conversation.messages[0] || null;
         return {
@@ -138,12 +147,14 @@ class ChatService {
                 createdAt: lastMessage.createdAt,
               }
             : null,
-          unreadCount,
+          unreadCount: unreadCountsByConversation.get(conversation.id) ?? 0,
           createdAt: conversation.createdAt,
           updatedAt: conversation.updatedAt,
         };
       }),
     );
+
+    return mappedConversations.filter((conversation): conversation is NonNullable<typeof conversation> => Boolean(conversation));
   }
 
   async createConversation(user: CurrentUser, body: { type: string; name?: string; participantIds?: string[] }) {
@@ -278,7 +289,7 @@ class ChatService {
     }
 
     const skip = (page - 1) * limit;
-    const [messages, totalCount] = await Promise.all([
+    const [messages, totalCountResult] = await Promise.all([
       prisma.message.findMany({
         where: { conversationId },
         include: {
@@ -296,8 +307,12 @@ class ChatService {
         skip,
         take: limit,
       }),
-      prisma.message.count({ where: { conversationId } }),
+      prisma.message.aggregate({
+        where: { conversationId },
+        _count: true,
+      }),
     ]);
+    const totalCount = totalCountResult._count;
 
     const unreadMessages = await prisma.message.findMany({
       where: {

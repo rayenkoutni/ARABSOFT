@@ -15,5 +15,6 @@ export function useCurrentUser() {
     socket: auth.socket,
     setOtpVerified: auth.setOtpVerified,
     switchRole: auth.switchRole,
+    updateCurrentUser: auth.updateCurrentUser,
   }
 }

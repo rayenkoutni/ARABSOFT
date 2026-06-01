@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AppError } from "@/lib/errors";
 import { apiError, handleApiError } from "@/lib/utils/api-response";
 import { requireAuth } from "@/lib/services/server/auth.service";
 import {
@@ -28,7 +29,7 @@ export async function GET(
     });
 
     if (!payload) {
-      throw new Error("NOT_FOUND");
+      throw new AppError("Fiche de paie introuvable", 404);
     }
 
     const pdfBuffer = await generatePayslipPdf(payload);
@@ -42,12 +43,8 @@ export async function GET(
       },
     });
   } catch (error) {
-    if (error instanceof Error && error.message === "NOT_FOUND") {
-      return handleApiError(apiError("Fiche de paie introuvable", 404));
-    }
-
-    if (error instanceof Error && error.message === "FORBIDDEN") {
-      return handleApiError(apiError("Acces refuse", 403));
+    if (error instanceof AppError) {
+      return handleApiError(apiError(error.message, error.status));
     }
 
     return handleApiError(error, "Impossible de generer le PDF");

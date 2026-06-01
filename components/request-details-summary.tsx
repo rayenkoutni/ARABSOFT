@@ -1,5 +1,5 @@
-import { ApprovalTimeline } from "@/components/approval-timeline"
 import { Button } from "@/components/ui/button"
+import { REQUEST_TYPE } from "@/lib/constants"
 import { getDocumentTypeLabel } from "@/lib/document-type"
 import {
   formatDateOnly,
@@ -9,6 +9,8 @@ import {
   isLeaveRequestType,
 } from "@/lib/leave-request"
 import { parseRequestContent } from "@/lib/request-content"
+import { buildRequestWorkflowSteps } from "@/lib/request-workflow"
+import { RequestWorkflowTrail } from "@/components/request-workflow-trail"
 import { Request } from "@/lib/types"
 import { Download } from "lucide-react"
 
@@ -34,10 +36,11 @@ export function RequestDetailsSummary({
     leaveBalance: request.employee?.leaveBalance,
   })
   const isLeaveRequest = isLeaveRequestType(request.type)
-  const documentTypeLabel = request.type === "DOCUMENT" ? getDocumentTypeLabel(request.documentType) : null
+  const documentTypeLabel = request.type === REQUEST_TYPE.DOCUMENT ? getDocumentTypeLabel(request.documentType) : null
   const downloadLabel = request.documentType === "FICHE_PAIE"
     ? "Telecharger la fiche de paie"
     : "Telecharger le document"
+  const workflowSteps = buildRequestWorkflowSteps(request)
 
   return (
     <div className="space-y-4">
@@ -128,7 +131,7 @@ export function RequestDetailsSummary({
       {showHistory && (
         <div>
           <p className="text-sm font-medium text-muted-foreground">Historique</p>
-          <ApprovalTimeline history={request.history} />
+          <RequestWorkflowTrail steps={workflowSteps} />
         </div>
       )}
     </div>

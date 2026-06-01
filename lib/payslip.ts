@@ -107,6 +107,20 @@ export function getBonusTypeLabel(type: string) {
   return bonusTypeLabels[type] ?? type
 }
 
+export function getBonusReasonLabel(reason: string | null | undefined, type: string) {
+  if (typeof reason === "string" && reason.startsWith("[TASK_BONUS:")) {
+    const closingIndex = reason.indexOf("]")
+    const title = closingIndex >= 0 ? reason.slice(closingIndex + 1).trim() : reason
+    return title ? `Tache: ${title}` : `Bonus ${getBonusTypeLabel(type)}`
+  }
+
+  if (typeof reason === "string" && reason.trim()) {
+    return reason.trim()
+  }
+
+  return `Bonus ${getBonusTypeLabel(type)}`
+}
+
 export function parseBonusDetails(value: unknown): PayslipBonusDetailsPayload {
   if (!value || typeof value !== "object") {
     return { bonuses: [] }

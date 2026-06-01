@@ -19,9 +19,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { REQUEST_STATUS, REQUEST_TYPE, ROLE } from '@/lib/constants'
 import { documentTypeOptions } from '@/lib/document-type'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { fetchEmployeePayslips } from '@/lib/services/client/employees.service'
+import { fetchProfile } from '@/lib/services/client/settings.service'
 import { formatFrenchMonthYear, getPayslipPeriodLabel } from '@/lib/payslip'
 import {
   formatLeaveBalance,
+  getTodayDateOnly,
   getLeaveDurationLabel,
   getLeaveImpactSummary,
   getLeaveRequestValidationMessage,
@@ -47,6 +50,11 @@ interface EmployeePayslipSummary {
 }
 
 type PayslipPeriodType = 'MONTHLY' | 'ANNUAL'
+
+function unwrapRequestsResponse(response: Request[] | { data?: Request[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
 
 function startOfMonthUtc(date: Date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 0, 0, 0, 0))
@@ -86,6 +94,22 @@ export default function NewRequestPage() {
   const [isLoadingDraft, setIsLoadingDraft] = useState(!!draftId)
   const [isLoadingProfile, setIsLoadingProfile] = useState(true)
   const [isLoadingPayslips, setIsLoadingPayslips] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const todayDate = getTodayDateOnly()
+
+  const resetForm = () => {
+    setFormData({
+      type: '',
+      documentType: '',
+      title: '',
+      description: '',
+      startDate: '',
+      endDate: '',
+    })
+    setPayslipPeriodType('MONTHLY')
+    setSelectedMonthlyPeriod('')
+    setSelectedAnnualPeriod('')
+  }
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -93,15 +117,12 @@ export default function NewRequestPage() {
 
       try {
         setIsLoadingProfile(true)
-        const response = await fetch('/api/employees/profile', { cache: 'no-store' })
-        if (!response.ok) {
-          throw new Error('Echec du chargement du profil')
-        }
-
-        const data = (await response.json()) as EmployeeProfileSummary
+        setLoadError(null)
+        const data = (await fetchProfile()) as EmployeeProfileSummary
         setProfile(data)
         setLeaveBalance(typeof data.leaveBalance === 'number' ? data.leaveBalance : 0)
       } catch {
+        setLoadError('Impossible de charger les donnees')
       } finally {
         setIsLoadingProfile(false)
       }
@@ -116,14 +137,10 @@ export default function NewRequestPage() {
 
       try {
         setIsLoadingPayslips(true)
-        const response = await fetch(`/api/employees/${user.id}/payslips`, { cache: 'no-store' })
-        if (!response.ok) {
-          throw new Error('Echec du chargement des fiches de paie')
-        }
-
-        const data = (await response.json()) as EmployeePayslipSummary[]
+        const data = (await fetchEmployeePayslips(user.id)) as EmployeePayslipSummary[]
         setExistingPayslips(Array.isArray(data) ? data : [])
       } catch {
+        setLoadError('Impossible de charger les donnees')
         setExistingPayslips([])
       } finally {
         setIsLoadingPayslips(false)
@@ -179,9 +196,12 @@ export default function NewRequestPage() {
       if (!user) return
 
       try {
-        const requests = await requestService.getUserRequests(user.id)
+        const requests = unwrapRequestsResponse(
+          await requestService.getUserRequests(user.id) as Request[] | { data?: Request[] }
+        )
         setExistingRequests(requests)
       } catch {
+        setLoadError('Impossible de charger les donnees')
       }
     }
 
@@ -292,6 +312,11 @@ export default function NewRequestPage() {
     return options.reverse()
   }, [existingPayslips, hireDate])
 
+  const draftRequests = useMemo(
+    () => existingRequests.filter((request) => request.status === REQUEST_STATUS.DRAFT),
+    [existingRequests],
+  )
+
   const selectedPayslipReason = isPayslipDocument
     ? payslipPeriodType === 'MONTHLY'
       ? selectedMonthlyPeriod
@@ -379,24 +404,15 @@ export default function NewRequestPage() {
       }
 
       if (draftId) {
-        const response = await fetch(`/api/requests/${draftId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: payload.type,
-            comment: `[${payload.title}] - ${payload.description}`,
-            isDraft: payload.isDraft,
-            startDate: payload.startDate || null,
-            endDate: payload.endDate || null,
-            documentType: payload.documentType ?? null,
-            reason: payload.reason ?? null,
-          }),
+        await requestService.updateRequest(draftId, {
+          type: payload.type,
+          comment: `[${payload.title}] - ${payload.description}`,
+          isDraft: payload.isDraft,
+          startDate: payload.startDate || null,
+          endDate: payload.endDate || null,
+          documentType: payload.documentType ?? null,
+          reason: payload.reason ?? null,
         })
-
-        if (!response.ok) {
-          const body = await response.json().catch(() => null)
-          throw new Error(body?.error || 'Echec de la mise a jour du brouillon')
-        }
 
         router.push('/dashboard/my-requests')
         return
@@ -411,8 +427,35 @@ export default function NewRequestPage() {
     }
   }
 
+  const handleCancel = async () => {
+    if (!draftId) {
+      router.back()
+      return
+    }
+
+    try {
+      setIsSubmitting(true)
+      setError('')
+      await requestService.deleteRequest(draftId)
+
+      setExistingRequests((current) => current.filter((request) => request.id !== draftId))
+      resetForm()
+      setIsLoadingDraft(false)
+      router.replace('/dashboard/new-request')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Echec de la suppression du brouillon')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
+      {loadError && (
+        <div className="text-destructive text-sm p-4 rounded border border-destructive/20">
+          {loadError}
+        </div>
+      )}
       <div>
         <h1 className="text-3xl font-bold" style={{ color: 'var(--color-text)', fontSize: '22px', fontWeight: 600 }}>
           {draftId ? 'Modifier le brouillon' : 'Creer une nouvelle demande'}
@@ -421,6 +464,51 @@ export default function NewRequestPage() {
           {draftId ? 'Continuer a modifier votre brouillon et soumettre quand pret' : 'Soumettre une nouvelle demande pour approbation'}
         </p>
       </div>
+
+      {draftRequests.length > 0 ? (
+        <Card className="max-w-2xl p-3 md:p-4">
+          <div className="space-y-3">
+          <div>
+            <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>
+              Liste des brouillons
+            </h2>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              Reprenez un brouillon existant depuis les cartes ci-dessous.
+            </p>
+          </div>
+
+            <div className="space-y-2">
+              {draftRequests.slice(0, 4).map((request) => {
+                const { title, description } = parseRequestContent(request)
+                const fallbackTitle = request.type === REQUEST_TYPE.DOCUMENT
+                  ? 'Brouillon document'
+                  : request.type === REQUEST_TYPE.LEAVE
+                    ? 'Brouillon conge'
+                    : request.type === REQUEST_TYPE.AUTHORIZATION
+                      ? 'Brouillon autorisation'
+                      : 'Brouillon pret'
+
+                return (
+                  <button
+                    key={request.id}
+                    type="button"
+                    onClick={() => router.push(`/dashboard/new-request?draftId=${request.id}`)}
+                    className="w-full rounded-lg border px-3 py-3 text-left transition-colors hover:bg-slate-50"
+                    style={{ borderColor: 'var(--color-border)' }}
+                  >
+                    <p className="font-medium" style={{ color: 'var(--color-text)' }}>
+                      {title || fallbackTitle}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                      {description || 'Aucune description'}
+                    </p>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       {isLoadingDraft ? (
         <div className="flex items-center justify-center py-12">
@@ -572,6 +660,7 @@ export default function NewRequestPage() {
                       type="date"
                       value={formData.startDate}
                       onChange={handleChange}
+                      min={todayDate}
                       required={isLeaveRequest}
                     />
                   </FieldGroup>
@@ -584,6 +673,7 @@ export default function NewRequestPage() {
                       type="date"
                       value={formData.endDate}
                       onChange={handleChange}
+                      min={formData.startDate || todayDate}
                       required={isLeaveRequest}
                     />
                   </FieldGroup>
@@ -630,7 +720,7 @@ export default function NewRequestPage() {
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => router.back()}
+                onClick={handleCancel}
                 disabled={isSubmitting}
               >
                 Annuler

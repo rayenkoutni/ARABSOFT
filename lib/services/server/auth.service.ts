@@ -14,6 +14,7 @@ import { AUTH_COOKIE_NAME, PRE_AUTH_COOKIE_NAME } from "@/lib/constants";
 import { sendEmail } from "@/lib/mailer";
 import { generateOTPEmail } from "@/lib/templates/otp-email";
 import { AppError } from "@/lib/errors";
+import { logAudit } from "@/lib/audit";
 
 const currentUserSelect = {
   id: true,
@@ -174,6 +175,15 @@ class ServerAuthService {
       try {
         const trustedPayload = this.verifyTrustedDeviceToken(trustedDeviceToken);
         if (trustedPayload.sub === employee.id) {
+          await logAudit({
+            actorId: employee.id,
+            actorName: employee.name,
+            action: "LOGIN",
+            entity: "Auth",
+            entityId: employee.id,
+            details: { method: "trusted-device", email: employee.email },
+          });
+
           return {
             nextStep: "session" as const,
             sessionToken: signSessionToken({ id: employee.id, role: employee.role }),
@@ -297,6 +307,15 @@ class ServerAuthService {
     await prisma.employee.update({
       where: { id: employee.id },
       data: { otpCode: null, otpExpiresAt: null },
+    });
+
+    await logAudit({
+      actorId: employee.id,
+      actorName: employee.name,
+      action: "LOGIN",
+      entity: "Auth",
+      entityId: employee.id,
+      details: { method: "otp", email: employee.email },
     });
 
     const sessionToken = signSessionToken({ id: employee.id, role: employee.role });

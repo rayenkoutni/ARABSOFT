@@ -12,6 +12,11 @@ export async function GET(
   try {
     const user = await requireAuth(req);
     const { id } = await params;
+    const mode = new URL(req.url).searchParams.get("mode");
+    if (mode === "delete-impact") {
+      const impact = await employeesService.getDeleteImpact(user, id);
+      return NextResponse.json(impact);
+    }
     const employee = await employeesService.getEmployeeById(user, id);
     return NextResponse.json(employee);
   } catch (error) {
@@ -45,7 +50,9 @@ export async function DELETE(
   try {
     const user = await requireAuth(req, ["RH"]);
     const { id } = await params;
-    const result = await employeesService.deleteEmployee(user, id);
+    const rawBody = await req.text();
+    const payload = rawBody ? JSON.parse(rawBody) as { replacementManagerId?: string | null } : {};
+    const result = await employeesService.deleteEmployee(user, id, payload);
     return NextResponse.json(result);
   } catch (error) {
     return handleApiError(error, "Echec de la suppression du collaborateur");

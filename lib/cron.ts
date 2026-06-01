@@ -4,8 +4,14 @@ import { prisma } from '@/lib/prisma'
 import { slaService } from '@/lib/services/server/sla.service'
 
 let isRunning = false
+let isInitialized = false
 
 export function initCron() {
+  if (isInitialized) {
+    return
+  }
+  isInitialized = true
+
   // Change from hourly to every 5 minutes for better reactivity
   cron.schedule('*/5 * * * *', async () => {
     if (isRunning) return

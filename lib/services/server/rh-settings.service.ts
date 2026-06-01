@@ -3,14 +3,16 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { Prisma, Role } from "@prisma/client";
 import { AppError } from "@/lib/errors";
-import { RH_TRANSFER_PLACEHOLDER_NAME } from "@/lib/constants";
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import type { CurrentUser } from "@/lib/services/server/auth.service";
 import { signatureService } from "@/lib/services/server/signature.service";
+import { deletePrivateConversationsForUser } from "@/lib/services/server/shared.service";
 
 const rhTransferInputSchema = z.object({
   newEmail: z.string().email("Adresse e-mail invalide"),
+  newName: z.string().trim().min(2, "Le nom du nouveau RH est obligatoire").max(80, "Le nom du nouveau RH est trop long"),
+  newPhone: z.string().trim().min(6, "Le numero de telephone est obligatoire").max(30, "Le numero de telephone est trop long"),
   currentPassword: z.string().min(1, "Le mot de passe actuel est obligatoire"),
 });
 
@@ -94,6 +96,8 @@ class RhSettingsService {
         });
       }
 
+      await deletePrivateConversationsForUser(actor.id, tx);
+
       await tx.messageRead.deleteMany({ where: { employeeId: actor.id } });
       await tx.notification.deleteMany({ where: { employeeId: actor.id } });
       await tx.payslip.deleteMany({ where: { employeeId: actor.id } });
@@ -104,11 +108,11 @@ class RhSettingsService {
         data: {
           email: input.newEmail,
           password: hashedPassword,
-          name: RH_TRANSFER_PLACEHOLDER_NAME,
-          phone: null,
+          name: input.newName,
+          phone: input.newPhone,
           avatar: null,
-          department: null,
-          position: null,
+          department: currentRh.department || "RH",
+          position: currentRh.position || "Responsable RH",
           managerId: null,
           otpCode: null,
           otpExpiresAt: null,

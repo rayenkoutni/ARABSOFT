@@ -52,7 +52,7 @@ async function startServer() {
     await chatService.init()
     kafkaEnabled = true
   } catch (error) {
-    console.warn("Kafka initialization failed. Chat will fall back to direct DB inserts.", error)
+    console.warn("[kafka] Initialization warning:", error instanceof Error ? error.message : String(error))
     kafkaEnabled = false
   }
 
@@ -87,6 +87,6 @@ async function startServer() {
 }
 
 startServer().catch((err) => {
-  console.error("Error starting server:", err)
+  console.error("[server] Startup error:", err instanceof Error ? err.message : String(err))
   process.exit(1)
 })

@@ -1,6 +1,7 @@
 import { Server as SocketIOServer, Socket } from "socket.io";
 import { parse } from "cookie";
 import { AUTH_COOKIE_NAME } from "@/lib/constants";
+import { AppError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { verifyToken, type SessionTokenPayload } from "@/lib/auth";
 
@@ -28,7 +29,7 @@ class SocketService {
 
   get IO() {
     if (!this.io) {
-      throw new Error("Socket.io not initialized");
+      throw new AppError("Socket.io not initialized", 500);
     }
 
     return this.io;
@@ -50,7 +51,7 @@ class SocketService {
       const payload = verifyToken(token) as Partial<SessionTokenPayload> & Partial<SocketSessionClaims>;
 
       if (payload.phase !== "session" || typeof payload.sub !== "string" || typeof payload.role !== "string") {
-        throw new Error("Unauthorized");
+        throw new AppError("Unauthorized", 401);
       }
 
       return {

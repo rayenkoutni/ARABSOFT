@@ -1,15 +1,16 @@
-import { NextResponse } from "next/server"
-import { requestInputSchema } from "@/lib/request-validation"
+import { NextRequest, NextResponse } from "next/server"
+import { requestInputSchema } from "@/lib/validators/request.validators"
 import { ApiError, handleApiError } from "@/lib/api-response"
 import { serverAuthService } from "@/lib/services/server/auth.service"
 import { requestServerService } from "@/lib/services/server/request.service"
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
     const user = await serverAuthService.requireAuth(req)
-    const url = new URL(req.url)
-    const view = url.searchParams.get("view")
-    const requests = await requestServerService.getRequestsForUser(user, view)
+    const view = req.nextUrl.searchParams.get("view")
+    const page = parseInt(req.nextUrl.searchParams.get("page") ?? "1")
+    const limit = parseInt(req.nextUrl.searchParams.get("limit") ?? "20")
+    const requests = await requestServerService.getRequestsForUser(user, view, { page, limit })
     return NextResponse.json(requests)
   } catch (error) {
     return handleApiError(error, "Failed to fetch requests")

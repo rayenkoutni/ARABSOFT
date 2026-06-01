@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ROLE } from '@/lib/constants'
+import { ROLE, REQUEST_STATUS } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { RequestCard } from '@/components/request-card'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,11 @@ import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-s
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 import { FileText, Search, X } from 'lucide-react'
+
+function unwrapRequestsResponse(response: Request[] | { data?: Request[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
 
 export default function RequestsPage() {
   const { user } = useCurrentUser()
@@ -33,7 +38,9 @@ export default function RequestsPage() {
 
       try {
         setIsLoading(true)
-        const data = await requestService.getRHHistoryRequests()
+        const data = unwrapRequestsResponse(
+          await requestService.getRHHistoryRequests() as Request[] | { data?: Request[] }
+        )
         setRequests(data)
       } finally {
         setIsLoading(false)
@@ -69,18 +76,18 @@ export default function RequestsPage() {
     }
 
     if (selectedTab === 'approved') {
-      return request.status === 'APPROUVE'
+      return request.status === REQUEST_STATUS.APPROVED
     }
 
     if (selectedTab === 'rejected') {
-      return request.status === 'REJETE'
+      return request.status === REQUEST_STATUS.REJECTED
     }
 
     return true
   })
 
-  const approvedCount = searchedRequests.filter((request) => request.status === 'APPROUVE').length
-  const rejectedCount = searchedRequests.filter((request) => request.status === 'REJETE').length
+  const approvedCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.APPROVED).length
+  const rejectedCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.REJECTED).length
   const handleDownloadDocument = (request: Request) => {
     window.open(requestService.getRequestDownloadUrl(request), '_blank', 'noopener,noreferrer')
   }

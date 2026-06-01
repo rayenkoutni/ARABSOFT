@@ -1,13 +1,20 @@
 import { logAudit } from "@/lib/audit";
+import { Prisma, TaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CurrentUser } from "@/lib/services/server/auth.service";
+import { assertProjectAccess } from "@/lib/services/server/shared.service";
 import {
   TaskInputError,
   type TaskCreateInput,
   taskWithRelationsInclude,
   validateTaskRequiredSkills,
 } from "@/lib/tasks";
+import { bonusService } from "@/lib/services/server/bonus.service";
+import { notificationServerService } from "@/lib/services/server/notification.service";
+import { validateTaskDueDateForProject } from "@/lib/services/server/projects.service";
 import { apiError } from "@/lib/utils/api-response";
+import { getTodayDateOnly, toDateOnlyValue } from "@/lib/leave-request";
+import type { PaginationParams, PaginatedResult } from "@/lib/types/pagination";
 
 interface SubmitReviewInput {
   deliverableLink?: string | null;
@@ -28,6 +35,7 @@ interface ProjectTaskReviewInput {
 }
 
 type TaskStatusActorRole = "COLLABORATEUR" | "CHEF";
+type TaskDbClient = Prisma.TransactionClient | typeof prisma;
 
 const allowedTransitions: Record<TaskStatusActorRole, Record<string, string[]>> = {
   COLLABORATEUR: {
@@ -45,101 +53,91 @@ const allowedTransitions: Record<TaskStatusActorRole, Record<string, string[]>> 
 };
 
 class TasksService {
-  private async getManagerTeamIds(managerId: string) {
-    const teamMembers = await prisma.employee.findMany({
-      where: { managerId },
-      select: { id: true },
-    });
-
-    return teamMembers.map((employee) => employee.id);
+  private getManagerProjectScope(userId: string) {
+    return {
+      OR: [{ createdById: userId }, { managerId: userId }],
+    } satisfies Prisma.ProjectWhereInput;
   }
 
-  private async assertProjectAccess(user: CurrentUser, projectId: string) {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: { team: { select: { id: true } } },
-    });
-
-    if (!project) {
-      throw apiError("Projet introuvable", 404);
+  private getRequiredSkillScore(
+    requiredSkills: Array<{ skillId: string; minimumLevel: number }>,
+    employeeSkills: Array<{ skillId: string; level: number }>,
+  ) {
+    if (requiredSkills.length === 0) {
+      return 0;
     }
 
-    if (user.role === "RH") {
-      return { project, teamIds: [] as string[] };
-    }
-
-    if (user.role === "CHEF") {
-      const teamIds = await this.getManagerTeamIds(user.id);
-      const isAuthorized =
-        project.createdById === user.id ||
-        project.managerId === user.id ||
-        project.team.some((member) => teamIds.includes(member.id));
-
-      if (!isAuthorized) {
-        throw apiError("Acces refuse a ce projet", 403);
+    const skillMap = new Map(employeeSkills.map((skill) => [skill.skillId, skill.level]));
+    return requiredSkills.reduce((score, requiredSkill) => {
+      const level = skillMap.get(requiredSkill.skillId);
+      if (!level) {
+        return score;
       }
 
-      return { project, teamIds };
-    }
-
-    const isProjectMember = project.team.some((member) => member.id === user.id);
-    if (!isProjectMember) {
-      throw apiError("Acces refuse a ce projet", 403);
-    }
-
-    return { project, teamIds: [] as string[] };
+      return score + (level >= requiredSkill.minimumLevel ? 3 : 1);
+    }, 0);
   }
 
-  private async recalculateProjectProgress(projectId: string) {
-    const allTasks = await prisma.task.findMany({ where: { projectId } });
+  private async recalculateProjectProgress(projectId: string, db: TaskDbClient = prisma) {
+    const allTasks = await db.task.findMany({ where: { projectId } });
     const completedTasks = allTasks.filter((task) => task.status === "DONE").length;
     const progress = allTasks.length > 0 ? Math.round((completedTasks / allTasks.length) * 100) : 0;
+    const status =
+      allTasks.length === 0
+        ? "EN_ATTENTE"
+        : completedTasks === allTasks.length
+          ? "TERMINE"
+          : "EN_COURS";
 
-    await prisma.project.update({
+    await db.project.update({
       where: { id: projectId },
-      data: { progress },
+      data: { progress, status },
     });
   }
 
-  async listTasks(user: CurrentUser, filters: { assigneeId: string | null; excludeStatus: string | null }) {
-    const where: Record<string, unknown> = {};
+  async listTasks(
+    user: CurrentUser, 
+    filters: { assigneeId: string | null; excludeStatus: string | null },
+    pagination: PaginationParams = {}
+  ) {
+    const { page = 1, limit = 50 } = pagination;
+    const where: Prisma.TaskWhereInput = {};
 
     if (filters.assigneeId) {
       where.assigneeId = filters.assigneeId;
     }
 
     if (filters.excludeStatus) {
-      where.status = { not: filters.excludeStatus };
+      where.status = { not: filters.excludeStatus as TaskStatus };
     }
 
     if (user.role === "RH") {
-      return prisma.task.findMany({ where, include: taskWithRelationsInclude });
-    }
-
-    if (user.role === "CHEF") {
-      const teamIds = await this.getManagerTeamIds(user.id);
-
-      if (filters.assigneeId && !teamIds.includes(filters.assigneeId)) {
+      // HR has full access
+    } else if (user.role === "CHEF") {
+      where.project = this.getManagerProjectScope(user.id);
+    } else {
+      if (filters.assigneeId && filters.assigneeId !== user.id) {
         throw apiError("Acces refuse", 403);
       }
-
-      if (!filters.assigneeId) {
-        where.assigneeId = { in: teamIds };
-      }
-
-      return prisma.task.findMany({ where, include: taskWithRelationsInclude });
+      where.assigneeId = user.id;
     }
 
-    if (filters.assigneeId && filters.assigneeId !== user.id) {
-      throw apiError("Acces refuse", 403);
-    }
-
-    where.assigneeId = user.id;
-    return prisma.task.findMany({ where, include: taskWithRelationsInclude });
+    const [data, total] = await prisma.$transaction([
+      prisma.task.findMany({
+        where,
+        include: taskWithRelationsInclude,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.task.count({ where })
+    ]);
+    
+    return { data, total, page, limit, hasMore: page * limit < total };
   }
 
   async createTask(user: CurrentUser, projectId: string, input: TaskCreateInput) {
-    const { project, teamIds } = await this.assertProjectAccess(user, projectId);
+    const { project, teamIds } = await assertProjectAccess(user, projectId);
 
     if (user.role === "CHEF" && !teamIds.includes(input.assigneeId)) {
       throw apiError("Vous ne pouvez assigner qu'aux membres de votre equipe", 400);
@@ -156,71 +154,80 @@ class TasksService {
     }
 
     const requiredSkills = await validateTaskRequiredSkills(prisma, input.requiredSkills);
-    const task = await prisma.task.create({
-      data: {
-        title: input.title,
-        description: input.description,
-        priority: input.priority,
-        assigneeId: input.assigneeId,
-        projectId,
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
-        status: "TODO",
-        requiredSkills: requiredSkills.length > 0
-          ? {
-              create: requiredSkills.map((requiredSkill) => ({
-                skillId: requiredSkill.skillId,
-                minimumLevel: requiredSkill.minimumLevel,
-              })),
-            }
-          : undefined,
-      },
-      include: taskWithRelationsInclude,
-    });
+    const dueDate = input.dueDate ? validateTaskDueDateForProject(input.dueDate, project) : null;
 
-    logAudit({
-      actorId: user.id,
-      actorName: user.name,
-      action: "CREATED",
-      entity: "Task",
-      entityId: task.id,
-      details: { title: task.title, status: task.status, projectId },
-    });
-
-    if (input.assigneeId !== user.id) {
-      await prisma.notification.create({
+    return prisma.$transaction(async (tx) => {
+      const task = await tx.task.create({
         data: {
-          employeeId: input.assigneeId,
-          title: "Nouvelle tache assignee",
-          message: `Une nouvelle tache "${input.title}" vous a ete assignee dans le projet "${project.name}".${input.dueDate ? ` Echeance: ${new Date(input.dueDate).toLocaleDateString()}` : ""}`,
+          title: input.title,
+          description: input.description,
+          priority: input.priority,
+          assigneeId: input.assigneeId,
+          projectId,
+          dueDate,
+          status: "TODO",
+          requiredSkills: requiredSkills.length > 0
+            ? {
+                create: requiredSkills.map((requiredSkill) => ({
+                  skillId: requiredSkill.skillId,
+                  minimumLevel: requiredSkill.minimumLevel,
+                })),
+              }
+            : undefined,
+        },
+        include: taskWithRelationsInclude,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          actorName: user.name,
+          action: "CREATED",
+          entity: "Task",
+          entityId: task.id,
+          details: JSON.stringify({ title: task.title, status: task.status, projectId }),
         },
       });
-    }
 
-    if (input.dueDate) {
-      const dueDateObj = new Date(input.dueDate);
-      const now = new Date();
-      const twoDaysFromNow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
-
-      if (dueDateObj <= twoDaysFromNow && dueDateObj > now) {
-        await prisma.notification.create({
+      if (input.assigneeId !== user.id) {
+        await tx.notification.create({
           data: {
             employeeId: input.assigneeId,
-            title: "Echeance proche",
-            message: `La tache "${input.title}" arrive a echeance le ${dueDateObj.toLocaleDateString()} dans le projet "${project.name}"`,
+            title: "Nouvelle tache assignee",
+            message: `Une nouvelle tache "${input.title}" vous a ete assignee dans le projet "${project.name}".${input.dueDate ? ` Echeance: ${new Date(input.dueDate).toLocaleDateString()}` : ""}`,
           },
         });
       }
-    }
 
-    return task;
+      if (input.dueDate) {
+        const dueDateObj = new Date(input.dueDate);
+        const now = new Date();
+        const twoDaysFromNow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+        if (dueDateObj <= twoDaysFromNow && dueDateObj > now) {
+          await tx.notification.create({
+            data: {
+              employeeId: input.assigneeId,
+              title: "Echeance proche",
+              message: `La tache "${input.title}" arrive a echeance le ${dueDateObj.toLocaleDateString()} dans le projet "${project.name}"`,
+            },
+          });
+        }
+      }
+
+      return task;
+    });
   }
 
   async updateProjectTaskStatus(user: CurrentUser, projectId: string, taskId: string, status: string) {
-    await this.assertProjectAccess(user, projectId);
+    await assertProjectAccess(user, projectId);
 
     const task = await prisma.task.findUnique({ where: { id: taskId } });
     if (!task) {
       throw apiError("Tache introuvable", 404);
+    }
+    if (task.projectId !== projectId) {
+      throw apiError("Tache introuvable dans ce projet", 404);
     }
 
     if (user.role === "COLLABORATEUR" && task.assigneeId !== user.id) {
@@ -232,52 +239,45 @@ class TasksService {
       throw apiError("Transition de statut non autorisee", 403);
     }
 
-    if (user.role === "CHEF") {
-      const teamIds = await this.getManagerTeamIds(user.id);
-      if (!teamIds.includes(task.assigneeId)) {
-        throw apiError("Vous ne pouvez pas modifier les taches d'autres equipes", 403);
-      }
-    }
-
     const updateData: Record<string, unknown> = { status };
 
-    if (status === "IN_REVIEW") {
-      updateData.submittedForReview = true;
+    return prisma.$transaction(async (tx) => {
+      if (status === "IN_REVIEW") {
+        updateData.submittedForReview = true;
 
-      const project = await prisma.project.findUnique({
-        where: { id: projectId },
-        select: { name: true },
-      });
+        const [project, assignee] = await Promise.all([
+          tx.project.findUnique({
+            where: { id: projectId },
+            select: { name: true, managerId: true, createdById: true },
+          }),
+          tx.employee.findUnique({
+            where: { id: task.assigneeId },
+            select: { name: true },
+          }),
+        ]);
 
-      const managers = await prisma.employee.findMany({
-        where: { role: "CHEF" },
-        select: { id: true },
-      });
+        const reviewRecipientId = project?.managerId ?? project?.createdById ?? null;
 
-      const assignee = await prisma.employee.findUnique({
-        where: { id: task.assigneeId },
-        select: { name: true },
-      });
-
-      if (managers.length > 0 && assignee) {
-        await prisma.notification.createMany({
-          data: managers.map((manager) => ({
-            employeeId: manager.id,
-            title: "Tache soumise pour revision",
-            message: `"${assignee.name}" a soumis la tache "${task.title}" pour revision dans le projet "${project?.name}"`,
-          })),
-        });
+        if (reviewRecipientId && assignee) {
+          await tx.notification.create({
+            data: {
+              employeeId: reviewRecipientId,
+              title: "Tache soumise pour revision",
+              message: `"${assignee.name}" a soumis la tache "${task.title}" pour revision dans le projet "${project?.name}"`,
+            },
+          });
+        }
       }
-    }
 
-    const updatedTask = await prisma.task.update({
-      where: { id: taskId },
-      data: updateData,
-      include: taskWithRelationsInclude,
+      const updatedTask = await tx.task.update({
+        where: { id: taskId },
+        data: updateData,
+        include: taskWithRelationsInclude,
+      });
+
+      await this.recalculateProjectProgress(projectId, tx);
+      return updatedTask;
     });
-
-    await this.recalculateProjectProgress(projectId);
-    return updatedTask;
   }
 
   async deleteProjectTask(user: CurrentUser, taskId: string) {
@@ -290,18 +290,186 @@ class TasksService {
       throw apiError("Task not found", 404);
     }
 
-    const teamIds = await this.getManagerTeamIds(user.id);
-    if (!teamIds.includes(task.assigneeId)) {
-      throw apiError("Vous ne pouvez pas supprimer les taches d'autres equipes", 403);
+    if (user.role !== "CHEF") {
+      throw apiError("Acces refuse", 403);
     }
 
-    await prisma.task.delete({ where: { id: taskId } });
-
-    if (task.projectId) {
-      await this.recalculateProjectProgress(task.projectId);
+    if (!task.projectId || !task.project) {
+      throw apiError("Projet de la tache introuvable", 404);
     }
+
+    await assertProjectAccess(user, task.projectId);
+
+    if (!(task.project.createdById === user.id || task.project.managerId === user.id)) {
+      throw apiError("Vous ne pouvez pas supprimer les taches d'autres projets", 403);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.task.delete({ where: { id: taskId } });
+
+      if (task.projectId) {
+        await this.recalculateProjectProgress(task.projectId, tx);
+      }
+    });
 
     return { success: true };
+  }
+
+  async reassignProjectTask(
+    user: CurrentUser,
+    projectId: string,
+    taskId: string,
+    input: { assigneeId?: string | null; useAi?: boolean },
+  ) {
+    const { project, teamIds } = await assertProjectAccess(user, projectId);
+
+    if (user.role !== "CHEF") {
+      throw apiError("Acces refuse a ce projet", 403);
+    }
+
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        requiredSkills: {
+          select: {
+            skillId: true,
+            minimumLevel: true,
+          },
+        },
+        assignee: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!task || task.projectId !== projectId) {
+      throw apiError("Tache introuvable", 404);
+    }
+
+    let nextAssigneeId = input.assigneeId ?? null;
+
+    if (input.useAi) {
+      const today = getTodayDateOnly();
+      const candidates = await prisma.employee.findMany({
+        where: {
+          id: { in: teamIds.filter((teamId) => teamId !== task.assigneeId) },
+        },
+        select: {
+          id: true,
+          name: true,
+          skills: {
+            select: {
+              skillId: true,
+              level: true,
+            },
+          },
+          requests: {
+            where: { type: "CONGE", status: "APPROUVE" },
+            select: { startDate: true, endDate: true },
+          },
+          assignedTasks: {
+            where: { projectId },
+            select: { id: true },
+          },
+        },
+      });
+
+      const bestCandidate = candidates
+        .map((candidate) => {
+          const onLeave = candidate.requests.some((request) => {
+            const startDate = toDateOnlyValue(request.startDate);
+            const endDate = toDateOnlyValue(request.endDate);
+            return !!startDate && !!endDate && startDate <= today && today <= endDate;
+          });
+
+          return {
+            candidate,
+            onLeave,
+            skillScore: this.getRequiredSkillScore(task.requiredSkills, candidate.skills),
+            taskLoad: candidate.assignedTasks.length,
+          };
+        })
+        .sort((left, right) => {
+          if (left.onLeave !== right.onLeave) {
+            return left.onLeave ? 1 : -1;
+          }
+          if (left.skillScore !== right.skillScore) {
+            return right.skillScore - left.skillScore;
+          }
+          if (left.taskLoad !== right.taskLoad) {
+            return left.taskLoad - right.taskLoad;
+          }
+          return left.candidate.name.localeCompare(right.candidate.name);
+        })[0];
+
+      nextAssigneeId = bestCandidate?.candidate.id ?? null;
+    }
+
+    if (!nextAssigneeId) {
+      throw apiError("Selectionnez un collaborateur pour la reassignment", 400);
+    }
+
+    if (!teamIds.includes(nextAssigneeId)) {
+      throw apiError("Vous ne pouvez reassigner qu'aux membres de votre equipe", 400);
+    }
+
+    if (nextAssigneeId === task.assigneeId) {
+      throw apiError("Cette tache est deja assignee a ce collaborateur", 400);
+    }
+
+    const nextAssignee = await prisma.employee.findUnique({
+      where: { id: nextAssigneeId },
+      select: { id: true, name: true },
+    });
+
+    if (!nextAssignee) {
+      throw apiError("Le collaborateur selectionne est introuvable", 404);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const updatedTask = await tx.task.update({
+        where: { id: taskId },
+        data: { assigneeId: nextAssigneeId },
+        include: taskWithRelationsInclude,
+      });
+
+      await tx.notification.create({
+        data: {
+          employeeId: nextAssigneeId,
+          title: "Tache reaffectee",
+          message: `La tache "${task.title}" vous a ete reaffectee dans le projet "${task.project?.name ?? project.name}".`,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          actorName: user.name,
+          action: "REASSIGNED",
+          entity: "Task",
+          entityId: task.id,
+          details: JSON.stringify({
+            previousAssigneeId: task.assigneeId,
+            previousAssigneeName: task.assignee?.name ?? null,
+            nextAssigneeId,
+            nextAssigneeName: nextAssignee.name,
+            projectId,
+            usedAi: Boolean(input.useAi),
+          }),
+        },
+      });
+
+      return updatedTask;
+    });
   }
 
   async submitTaskForReview(user: CurrentUser, taskId: string, input: SubmitReviewInput) {
@@ -311,7 +479,10 @@ class TasksService {
 
     const task = await prisma.task.findUnique({
       where: { id: taskId },
-      include: { assignee: { select: { managerId: true } } },
+      include: {
+        assignee: { select: { managerId: true, name: true } },
+        project: { select: { name: true } },
+      },
     });
 
     if (!task) {
@@ -326,14 +497,28 @@ class TasksService {
       throw apiError("Seules les taches en cours peuvent etre soumises pour revision", 400);
     }
 
-    const updatedTask = await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        status: "IN_REVIEW",
-        submittedForReview: true,
-        deliverableLink: input.deliverableLink || null,
-        deliverableNote: input.deliverableNote || null,
-      },
+    const updatedTask = await prisma.$transaction(async (tx) => {
+      const nextTask = await tx.task.update({
+        where: { id: taskId },
+        data: {
+          status: "IN_REVIEW",
+          submittedForReview: true,
+          deliverableLink: input.deliverableLink || null,
+          deliverableNote: input.deliverableNote || null,
+        },
+      });
+
+      if (task.assignee?.managerId) {
+        await tx.notification.create({
+          data: {
+            employeeId: task.assignee.managerId,
+            title: "Tache soumise pour revision",
+            message: `"${task.assignee.name}" a soumis la tache "${task.title}" pour revision dans le projet "${task.project?.name ?? "Projet"}"`,
+          },
+        });
+      }
+
+      return nextTask;
     });
 
     return { success: true, task: updatedTask };
@@ -342,15 +527,23 @@ class TasksService {
   async reviewTaskDecision(user: CurrentUser, taskId: string, input: ReviewDecisionInput) {
     const task = await prisma.task.findUnique({
       where: { id: taskId },
-      include: { assignee: { select: { managerId: true } } },
+      include: {
+        assignee: { select: { managerId: true } },
+        project: { select: { id: true, managerId: true, createdById: true } },
+      },
     });
 
     if (!task) {
       throw apiError("Tache introuvable", 404);
     }
 
-    if (task.assignee?.managerId !== user.id) {
-      throw apiError("Vous ne pouvez reviser que les taches de votre equipe", 403);
+    const canReview =
+      user.role === "RH" ||
+      task.project?.managerId === user.id ||
+      task.project?.createdById === user.id;
+
+    if (!canReview) {
+      throw apiError("Vous ne pouvez reviser que les taches de vos projets", 403);
     }
 
     if (!task.submittedForReview) {
@@ -370,6 +563,7 @@ class TasksService {
         reviewedById: user.id,
         reviewedAt: new Date(),
         taskScore: score,
+        reviewComment: input.reviewComment || null,
       };
     } else {
       updateData = {
@@ -381,104 +575,119 @@ class TasksService {
       };
     }
 
-    const updatedTask = await prisma.task.update({
-      where: { id: taskId },
-      data: updateData,
-    });
+    const updatedTask = await prisma.$transaction(async (tx) => {
+      const nextTask = await tx.task.update({
+        where: { id: taskId },
+        data: updateData,
+      });
 
-    if (task.projectId) {
-      await this.recalculateProjectProgress(task.projectId);
-    }
+      if (task.projectId) {
+        await this.recalculateProjectProgress(task.projectId, tx);
+      }
+
+      if (input.decision === "APPROVE") {
+        await bonusService.createOrUpdateTaskPerformanceBonus(nextTask.id, tx);
+      }
+
+      return nextTask;
+    });
 
     return { success: true, task: updatedTask };
   }
 
   async reviewTaskBatch(user: CurrentUser, projectId: string, decisions: ProjectTaskReviewInput[]) {
-    const { project, teamIds } = await this.assertProjectAccess(user, projectId);
+    const { project, teamIds } = await assertProjectAccess(user, projectId);
 
     if (user.role !== "CHEF") {
       throw apiError("Acces refuse a ce projet", 403);
     }
 
-    const results = [];
+    const results = await prisma.$transaction(async (tx) => {
+      const nextResults = [];
 
-    for (const decision of decisions) {
-      const task = await prisma.task.findUnique({
-        where: { id: decision.taskId },
-        include: {
-          assignee: { select: { name: true } },
-          project: { select: { name: true } },
-        },
-      });
+      for (const decision of decisions) {
+        const task = await tx.task.findUnique({
+          where: { id: decision.taskId },
+          include: {
+            assignee: { select: { name: true } },
+            project: { select: { name: true } },
+          },
+        });
 
-      if (!task) {
-        throw apiError("Task not found", 404);
-      }
-
-      if (!task.submittedForReview) {
-        throw apiError("Cette tache n'est pas soumise pour revision", 400);
-      }
-
-      if (!teamIds.includes(task.assigneeId)) {
-        throw apiError("Vous ne pouvez pas reviser les taches d'autres equipes", 403);
-      }
-
-      let updatedTask;
-      const projectName = task.project?.name || project.name || "Projet";
-
-      if (decision.action === "accept") {
-        const score = Number(decision.taskScore);
-        if (Number.isNaN(score) || score < 1 || score > 10) {
-          throw apiError("Un score entre 1 et 10 est requis pour approuver une tache", 400);
+        if (!task) {
+          throw apiError("Task not found", 404);
         }
 
-        updatedTask = await prisma.task.update({
-          where: { id: decision.taskId },
-          data: {
-            status: "DONE",
-            submittedForReview: false,
-            reviewedById: user.id,
-            reviewedAt: new Date(),
-            taskScore: score,
-          },
-        });
+        if (!task.submittedForReview) {
+          throw apiError("Cette tache n'est pas soumise pour revision", 400);
+        }
 
-        await prisma.notification.create({
-          data: {
-            employeeId: task.assigneeId,
-            title: "Tache acceptee",
-            message: `Votre tache "${task.title}" a ete acceptee dans le projet "${projectName}"`,
-          },
-        });
-      } else {
-        updatedTask = await prisma.task.update({
-          where: { id: decision.taskId },
-          data: {
-            status: "IN_PROGRESS",
-            submittedForReview: false,
-            deliverableLink: null,
-            deliverableNote: null,
-            reviewComment: decision.comment || null,
-            reviewedById: user.id,
-            reviewedAt: new Date(),
-          },
-        });
+        if (!teamIds.includes(task.assigneeId)) {
+          throw apiError("Vous ne pouvez pas reviser les taches d'autres equipes", 403);
+        }
 
-        await prisma.notification.create({
-          data: {
-            employeeId: task.assigneeId,
-            title: "Revision requise",
-            message: decision.comment
-              ? `Revision requise pour votre tache "${task.title}". Commentaire: ${decision.comment}`
-              : `Revision requise pour votre tache "${task.title}" dans le projet "${projectName}"`,
-          },
-        });
+        let updatedTask;
+        const projectName = task.project?.name || project.name || "Projet";
+
+        if (decision.action === "accept") {
+          const score = Number(decision.taskScore);
+          if (Number.isNaN(score) || score < 1 || score > 10) {
+            throw apiError("Un score entre 1 et 10 est requis pour approuver une tache", 400);
+          }
+
+          updatedTask = await tx.task.update({
+            where: { id: decision.taskId },
+            data: {
+              status: "DONE",
+              submittedForReview: false,
+              reviewedById: user.id,
+              reviewedAt: new Date(),
+              taskScore: score,
+              reviewComment: decision.comment || null,
+            },
+          });
+
+          await bonusService.createOrUpdateTaskPerformanceBonus(updatedTask.id, tx);
+
+          await tx.notification.create({
+            data: {
+              employeeId: task.assigneeId,
+              title: "Tache acceptee",
+              message: `Votre tache "${task.title}" a ete acceptee dans le projet "${projectName}"`,
+            },
+          });
+        } else {
+          updatedTask = await tx.task.update({
+            where: { id: decision.taskId },
+            data: {
+              status: "IN_PROGRESS",
+              submittedForReview: false,
+              deliverableLink: null,
+              deliverableNote: null,
+              reviewComment: decision.comment || null,
+              reviewedById: user.id,
+              reviewedAt: new Date(),
+            },
+          });
+
+          await tx.notification.create({
+            data: {
+              employeeId: task.assigneeId,
+              title: "Revision requise",
+              message: decision.comment
+                ? `Revision requise pour votre tache "${task.title}". Commentaire: ${decision.comment}`
+                : `Revision requise pour votre tache "${task.title}" dans le projet "${projectName}"`,
+            },
+          });
+        }
+
+        nextResults.push(updatedTask);
       }
 
-      results.push(updatedTask);
-    }
+      await this.recalculateProjectProgress(projectId, tx);
+      return nextResults;
+    });
 
-    await this.recalculateProjectProgress(projectId);
     return {
       success: true,
       tasks: results,

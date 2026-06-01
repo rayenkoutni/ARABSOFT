@@ -108,7 +108,7 @@ model Employee {
   managerId    String?
   hireDate       DateTime
   leaveBalance   Float     @default(0)
-  salaryGradeId  String?
+  salaryGradeId  String
   salaryOverride Float?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -136,6 +136,8 @@ model Employee {
   bonuses              Bonus[]
   payslips             Payslip[]
   salaryHistory        SalaryHistory[]
+
+  @@index([managerId])
 }
 
 model Request {
@@ -199,7 +201,7 @@ model RequestHistory {
   comment    String?
   createdAt  DateTime @default(now())
 
-  request    Request  @relation(fields: [requestId], references: [id])
+  request    Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
 }
 
 model Task {
@@ -222,12 +224,13 @@ model Task {
   updatedAt          DateTime    @updatedAt
 
   assignee           Employee           @relation("AssigneeTasks", fields: [assigneeId], references: [id])
-  project            Project?           @relation(fields: [projectId], references: [id])
+  project            Project?           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   reviewedBy         Employee?          @relation("TaskReview", fields: [reviewedById], references: [id])
   requiredSkills     TaskRequiredSkill[]
 
   @@index([assigneeId, status, reviewedAt])
   @@index([reviewedAt, taskScore])
+  @@index([projectId])
 }
 
 model Project {
@@ -235,9 +238,9 @@ model Project {
   name            String
   description     String?
   progress        Int           @default(0)
-  managerId       String?
-  createdById     String?
-  createdByRole   Role?
+  managerId       String
+  createdById     String
+  createdByRole   Role
   status          ProjectStatus @default(EN_COURS)
   priority        String        @default("MEDIUM")
   startDate       DateTime?
@@ -250,6 +253,9 @@ model Project {
   tasks           Task[]
   team            Employee[]    @relation("ProjectTeam")
   changeHistory   ProjectChangeHistory[]
+
+  @@index([managerId])
+  @@index([createdById])
 }
 
 model ProjectChangeHistory {
@@ -264,7 +270,7 @@ model ProjectChangeHistory {
   approvedBy String?
   createdAt  DateTime @default(now())
 
-  project    Project  @relation(fields: [projectId], references: [id])
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model Skill {
@@ -501,6 +507,8 @@ model Notification {
   createdAt   DateTime @default(now())
 
   employee    Employee @relation("EmployeeNotifications", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
 }
 
 model AuditLog {

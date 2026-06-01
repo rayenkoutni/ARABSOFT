@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { requestService } from '@/lib'
-import { REQUEST_TYPE, ROLE, TASK_STATUS } from '@/lib/constants'
+import { REQUEST_STATUS, REQUEST_TYPE, ROLE, TASK_STATUS } from '@/lib/constants'
 import { Request } from '@/lib/types'
 import { RequestCard } from '@/components/request-card'
 import { Badge } from '@/components/ui/badge'
@@ -18,8 +18,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { PriorityBadge, StatusBadge } from '@/components/ui/status-badge'
 import { useToast } from '@/hooks/use-toast'
+import {
+  fetchDashboardEmployeeProfile,
+  fetchDashboardEmployees,
+  fetchDashboardReport,
+  fetchDashboardTasks,
+  fetchSlaStats,
+} from '@/lib/services/client/dashboard.service'
+import { fetchBonuses } from '@/lib/services/client/bonuses.service'
 import {
   BarChart3,
   Clock,
@@ -27,9 +34,9 @@ import {
   XCircle,
   Plus,
   TrendingUp,
-  AlertTriangle,
   FileText,
   BriefcaseBusiness,
+  Gift,
   CalendarDays,
   CheckCheck,
 } from 'lucide-react'
@@ -37,6 +44,8 @@ import Link from 'next/link'
 import { BrandedLoading } from '@/components/ui/spinner'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList, PieChart, Pie, LineChart, Line } from 'recharts'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { format } from 'date-fns'
+import { formatAmountTnd, formatFrenchMonthYear, getBonusReasonLabel, getBonusTypeLabel, getMonthlyBounds } from '@/lib/payslip'
 
 interface SlaStats {
   breachedThisMonth: number
@@ -62,6 +71,10 @@ interface DashboardTask {
   title: string
   status: 'TODO' | 'IN_PROGRESS' | 'IN_REVIEW' | 'DONE'
   priority: 'LOW' | 'MEDIUM' | 'HIGH'
+  taskScore?: number | null
+  reviewComment?: string | null
+  deliverableLink?: string | null
+  deliverableNote?: string | null
   dueDate: string | null
   updatedAt: string
   assigneeId?: string
@@ -75,11 +88,24 @@ interface DashboardTask {
   } | null
 }
 
+function canShowTaskCompletionDetails(task: DashboardTask) {
+  return task.status === TASK_STATUS.DONE || task.status === TASK_STATUS.IN_PROGRESS
+}
+
 interface DashboardEmployee {
   id: string
   name: string
   role: string
   managerId: string | null
+}
+
+interface DashboardBonus {
+  id: string
+  amount: number
+  type: string
+  reason: string | null
+  period: string | null
+  createdAt: string
 }
 
 const chartTheme = {
@@ -131,6 +157,29 @@ function formatTaskDueDate(date: string | null) {
   })
 }
 
+function getBonusMonthKey(bonus: DashboardBonus) {
+  if (bonus.period && /^\d{4}-\d{2}$/.test(bonus.period)) {
+    return bonus.period
+  }
+
+  return format(new Date(bonus.createdAt), 'yyyy-MM')
+}
+
+function unwrapRequestsResponse(response: Request[] | { data?: Request[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
+
+function unwrapTasksResponse(response: DashboardTask[] | { data?: DashboardTask[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
+
+function unwrapEmployeesResponse(response: DashboardEmployee[] | { data?: DashboardEmployee[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
+
 export default function DashboardPage() {
   const { user } = useCurrentUser()
   const router = useRouter()
@@ -144,10 +193,12 @@ export default function DashboardPage() {
   const [slaStats, setSlaStats] = useState<SlaStats | null>(null)
   const [requests, setRequests] = useState<Request[]>([])
   const [tasks, setTasks] = useState<DashboardTask[]>([])
+  const [bonuses, setBonuses] = useState<DashboardBonus[]>([])
   const [leaveBalance, setLeaveBalance] = useState(0)
   const [employees, setEmployees] = useState<DashboardEmployee[]>([])
   const [selectedTeamFilter, setSelectedTeamFilter] = useState('all')
   const [selectedProjectFilter, setSelectedProjectFilter] = useState('all')
+  const [selectedTaskStatusFilter, setSelectedTaskStatusFilter] = useState<'finished' | 'unfinished'>('finished')
   const [isLoading, setIsLoading] = useState(true)
   const [isExportingReport, setIsExportingReport] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -160,56 +211,55 @@ export default function DashboardPage() {
         setIsLoading(true)
         setLoadError(null)
 
-        const statsData = await requestService.getDashboardStats(user.id, user.role)
-        setStats(statsData)
-
         if (user.role === ROLE.HR || user.role === ROLE.MANAGER) {
-          const res = await fetch('/api/sla/stats')
-          if (res.ok) setSlaStats(await res.json())
+          setSlaStats(await fetchSlaStats())
         }
 
         let requestsData: Request[] = []
         if (user.role === ROLE.HR) {
-          requestsData = await requestService.getAllRequests()
+          requestsData = unwrapRequestsResponse(
+            await requestService.getAllRequests() as Request[] | { data?: Request[] }
+          )
         } else if (user.role === ROLE.MANAGER) {
-          requestsData = await requestService.getManagerPendingRequests(user.id)
+          requestsData = unwrapRequestsResponse(
+            await requestService.getManagerPendingRequests(user.id) as Request[] | { data?: Request[] }
+          )
         } else {
-          requestsData = await requestService.getUserRequests(user.id)
+          requestsData = unwrapRequestsResponse(
+            await requestService.getUserRequests(user.id) as Request[] | { data?: Request[] }
+          )
+          requestsData = requestsData.filter((request) => request.status !== REQUEST_STATUS.DRAFT)
         }
 
+        setStats({
+          totalRequests: requestsData.length,
+          pendingRequests: requestsData.filter((request) => request.status.startsWith('EN_ATTENTE')).length,
+          approvedRequests: requestsData.filter((request) => request.status === REQUEST_STATUS.APPROVED).length,
+          rejectedRequests: requestsData.filter((request) => request.status === REQUEST_STATUS.REJECTED).length,
+        })
         setRequests(requestsData.slice(0, 5))
 
         if (user.role === ROLE.EMPLOYEE) {
-          const [profileRes, tasksRes] = await Promise.all([
-            fetch('/api/employees/profile', { cache: 'no-store' }),
-            fetch('/api/tasks', { cache: 'no-store' }),
+          const [profileData, tasksData, bonusesData] = await Promise.all([
+            fetchDashboardEmployeeProfile(),
+            fetchDashboardTasks(),
+            fetchBonuses(user.id),
           ])
-
-          if (profileRes.ok) {
-            const profileData = await profileRes.json()
-            setLeaveBalance(typeof profileData.leaveBalance === 'number' ? profileData.leaveBalance : 0)
-          }
-
-          if (tasksRes.ok) {
-            const tasksData = await tasksRes.json()
-            setTasks(Array.isArray(tasksData) ? tasksData : [])
-          }
+          setLeaveBalance(typeof profileData.leaveBalance === 'number' ? profileData.leaveBalance : 0)
+          setTasks(unwrapTasksResponse(tasksData as DashboardTask[] | { data?: DashboardTask[] }))
+          setBonuses(Array.isArray(bonusesData) ? bonusesData : [])
         }
 
         if (user.role === ROLE.MANAGER || user.role === ROLE.HR) {
-          const tasksRes = await fetch('/api/tasks?excludeStatus=DONE', { cache: 'no-store' })
-          if (tasksRes.ok) {
-            const tasksData = await tasksRes.json()
-            setTasks(Array.isArray(tasksData) ? tasksData : [])
-          }
+          const tasksData = await fetchDashboardTasks()
+          setTasks(unwrapTasksResponse(tasksData as DashboardTask[] | { data?: DashboardTask[] }))
         }
 
         if (user.role === ROLE.HR) {
-          const employeesRes = await fetch('/api/employees', { cache: 'no-store' })
-          if (employeesRes.ok) {
-            const employeesData = await employeesRes.json()
-            setEmployees(Array.isArray(employeesData) ? employeesData : [])
-          }
+          const employeesData = await fetchDashboardEmployees()
+          setEmployees(
+            unwrapEmployeesResponse(employeesData as DashboardEmployee[] | { data?: DashboardEmployee[] })
+          )
         }
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : 'Impossible de charger le tableau de bord')
@@ -224,15 +274,14 @@ export default function DashboardPage() {
   if (!user) return null
 
   const dashboardTitle = {
-    RH: 'Tableau de bord RH',
-    CHEF: 'Tableau de bord Manager',
+    [ROLE.HR]: 'Tableau de bord RH',
+    [ROLE.MANAGER]: 'Tableau de bord Manager',
     [ROLE.EMPLOYEE]: 'Tableau de bord employe',
   }[user.role]
 
-  const completedTasks = tasks
-    .filter((task) => task.status === TASK_STATUS.DONE)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    .slice(0, 5)
+  const currentMonthKey = format(new Date(), 'yyyy-MM')
+  const currentMonthBonuses = bonuses.filter((bonus) => getBonusMonthKey(bonus) === currentMonthKey)
+  const currentMonthBonusTotal = currentMonthBonuses.reduce((sum, bonus) => sum + bonus.amount, 0)
 
   const teamFilterOptions = user.role === ROLE.HR
     ? employees
@@ -263,13 +312,21 @@ export default function DashboardPage() {
   ).sort((a, b) => a.name.localeCompare(b.name, 'fr'))
 
   const visibleTeamTasks = activeTeamTasks.filter((task) => {
-    if (selectedProjectFilter === 'all') return true
-    return task.project?.id === selectedProjectFilter
+    const matchesProject = selectedProjectFilter === 'all' || task.project?.id === selectedProjectFilter
+    const matchesStatus = selectedTaskStatusFilter === 'finished'
+      ? task.status === TASK_STATUS.DONE
+      : task.status !== TASK_STATUS.DONE
+
+    return matchesProject && matchesStatus
   })
 
   const visibleCollaboratorTasks = tasks.filter((task) => {
-    if (selectedProjectFilter === 'all') return true
-    return task.project?.id === selectedProjectFilter
+    const matchesProject = selectedProjectFilter === 'all' || task.project?.id === selectedProjectFilter
+    const matchesStatus = selectedTaskStatusFilter === 'finished'
+      ? task.status === TASK_STATUS.DONE
+      : task.status !== TASK_STATUS.DONE
+
+    return matchesProject && matchesStatus
   })
 
   // Navigate to My Approvals and pre-open the modal for the selected request
@@ -288,7 +345,7 @@ export default function DashboardPage() {
     try {
       setIsExportingReport(true)
 
-      const response = await fetch('/api/dashboard/report')
+      const response = await fetchDashboardReport()
       if (!response.ok) {
         throw new Error('Export failed')
       }
@@ -399,13 +456,70 @@ export default function DashboardPage() {
           />
         )}
         {user.role === ROLE.EMPLOYEE && (
-          <KpiCard
-            label="Mes taches"
-            value={tasks.length}
-            icon={BriefcaseBusiness}
-          />
-        )}
+          <Card className="flex flex-col gap-3 border-t-4 p-3 md:p-4 lg:p-5" style={{ borderTopColor: '#F5A623' }}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium" style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>
+                  Bonus du mois
+                </p>
+                <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  {formatFrenchMonthYear(getMonthlyBounds(currentMonthKey).start)}
+                </p>
+              </div>
+              <div className="rounded-lg p-2" style={{ backgroundColor: 'rgba(245, 166, 35, 0.16)', color: '#D97706' }}>
+                <Gift className="h-4 w-4" />
+              </div>
+            </div>
+
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <h3 className="font-semibold" style={{ fontSize: '28px', fontWeight: 700, color: 'var(--color-text)' }}>
+                  {formatAmountTnd(currentMonthBonusTotal)}
+                </h3>
+                <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  {currentMonthBonuses.length} bonus ce mois-ci
+                </p>
+              </div>
+              <Link href="/dashboard/bonuses">
+                <Button variant="outline" size="sm">
+                  Historique
+                </Button>
+              </Link>
+            </div>
+
+            <div className="space-y-2 border-t pt-3" style={{ borderColor: 'var(--color-border)' }}>
+              {currentMonthBonuses.length > 0 ? (
+                <>
+                  {currentMonthBonuses.slice(0, 2).map((bonus) => (
+                    <div key={bonus.id} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2" style={{ backgroundColor: 'rgba(245, 166, 35, 0.08)' }}>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                          {getBonusReasonLabel(bonus.reason, bonus.type)}
+                        </p>
+                        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                          {getBonusTypeLabel(bonus.type)}
+                        </p>
                       </div>
+                      <span className="text-sm font-semibold" style={{ color: '#B45309' }}>
+                        {formatAmountTnd(bonus.amount)}
+                      </span>
+                    </div>
+                  ))}
+                  {currentMonthBonuses.length > 2 ? (
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      +{currentMonthBonuses.length - 2} autre{currentMonthBonuses.length - 2 > 1 ? 's' : ''} bonus dans l&apos;historique du mois
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                  Aucun bonus enregistre pour le mois en cours. Le suivi repart a zero chaque mois.
+                </p>
+              )}
+            </div>
+          </Card>
+        )}
+      </div>
 
         {/* SLA Unified Dashboard - Single Card */}
         {(user.role === ROLE.HR || user.role === ROLE.MANAGER) && slaStats && (
@@ -667,6 +781,16 @@ export default function DashboardPage() {
                 </SelectContent>
               </Select>
 
+              <Select value={selectedTaskStatusFilter} onValueChange={(value: 'finished' | 'unfinished') => setSelectedTaskStatusFilter(value)}>
+                <SelectTrigger className="w-full sm:w-56">
+                  <SelectValue placeholder="Filtrer par statut" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="finished">Terminees</SelectItem>
+                  <SelectItem value="unfinished">Non terminees</SelectItem>
+                </SelectContent>
+              </Select>
+
               <Link href="/dashboard/projects">
                 <Button variant="outline" size="sm" className="w-full sm:w-auto">
                   Voir mes projets
@@ -724,8 +848,47 @@ export default function DashboardPage() {
                       <Badge className="border-0" style={taskPriorityBadgeStyles[task.priority]}>
                         Priorite {taskPriorityLabels[task.priority]}
                       </Badge>
+                      {typeof task.taskScore === 'number' ? (
+                        <Badge className="border-0" style={{ backgroundColor: '#F5F3FF', color: '#6D28D9' }}>
+                          Note {task.taskScore}/10
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
+
+                  {task.status === TASK_STATUS.DONE && (task.deliverableLink || task.deliverableNote) ? (
+                    <div className="mt-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' }}>
+                      <p className="font-medium" style={{ color: '#1D4ED8' }}>Livrable soumis</p>
+                      {task.deliverableLink ? (
+                        <a
+                          href={task.deliverableLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 block break-all text-sm text-blue-700 underline"
+                        >
+                          {task.deliverableLink}
+                        </a>
+                      ) : null}
+                      {task.deliverableNote ? (
+                        <p className="mt-1 whitespace-pre-wrap" style={{ color: 'var(--color-text-muted)' }}>
+                          {task.deliverableNote}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {canShowTaskCompletionDetails(task) && task.reviewComment ? (
+                    <div
+                      className="mt-4 rounded-lg border px-3 py-2 text-sm"
+                      style={{
+                        borderColor: task.status === TASK_STATUS.DONE ? '#DDD6FE' : '#FECACA',
+                        backgroundColor: task.status === TASK_STATUS.DONE ? '#F5F3FF' : '#FEF2F2',
+                        color: task.status === TASK_STATUS.DONE ? '#5B21B6' : '#B91C1C',
+                      }}
+                    >
+                      <strong>Commentaire du chef :</strong> {task.reviewComment}
+                    </div>
+                  ) : null}
 
                   <div
                     className="mt-4 flex flex-col gap-2 border-t pt-3 text-sm sm:flex-row sm:items-center sm:justify-between"
@@ -798,6 +961,16 @@ export default function DashboardPage() {
                 </Select>
               )}
 
+              <Select value={selectedTaskStatusFilter} onValueChange={(value: 'finished' | 'unfinished') => setSelectedTaskStatusFilter(value)}>
+                <SelectTrigger className="w-full sm:w-56">
+                  <SelectValue placeholder="Filtrer par statut" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="finished">Terminees</SelectItem>
+                  <SelectItem value="unfinished">Non terminees</SelectItem>
+                </SelectContent>
+              </Select>
+
               {user.role === ROLE.MANAGER && (
                 <Link href="/dashboard/projects">
                   <Button variant="outline" size="sm" className="w-full sm:w-auto">
@@ -814,7 +987,7 @@ export default function DashboardPage() {
             </div>
           ) : visibleTeamTasks.length > 0 ? (
             <div className="grid gap-4">
-              {visibleTeamTasks.slice(0, 8).map((task) => (
+              {visibleTeamTasks.map((task) => (
                 <Card
                   key={task.id}
                   className="border border-border bg-card p-4 shadow-sm transition-colors hover:border-[color:var(--color-brand-blue)]/30"
@@ -857,8 +1030,48 @@ export default function DashboardPage() {
                       <Badge className="border-0" style={taskPriorityBadgeStyles[task.priority]}>
                         Priorite {taskPriorityLabels[task.priority]}
                       </Badge>
+                      {typeof task.taskScore === 'number' ? (
+                        <Badge className="border-0" style={{ backgroundColor: '#F5F3FF', color: '#6D28D9' }}>
+                          Note {task.taskScore}/10
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
+
+                  {task.status === TASK_STATUS.DONE && (task.deliverableLink || task.deliverableNote) ? (
+                    <div className="mt-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' }}>
+                      <p className="font-medium" style={{ color: '#1D4ED8' }}>Livrable soumis</p>
+                      {task.deliverableLink ? (
+                        <a
+                          href={task.deliverableLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 block break-all text-sm text-blue-700 underline"
+                        >
+                          {task.deliverableLink}
+                        </a>
+                      ) : null}
+                      {task.deliverableNote ? (
+                        <p className="mt-1 whitespace-pre-wrap" style={{ color: 'var(--color-text-muted)' }}>
+                          {task.deliverableNote}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {canShowTaskCompletionDetails(task) && task.reviewComment ? (
+                    <div
+                      className="mt-4 rounded-lg border px-3 py-2 text-sm"
+                      style={{
+                        borderColor: task.status === TASK_STATUS.DONE ? '#DDD6FE' : '#FECACA',
+                        backgroundColor: task.status === TASK_STATUS.DONE ? '#F5F3FF' : '#FEF2F2',
+                        color: task.status === TASK_STATUS.DONE ? '#5B21B6' : '#B91C1C',
+                      }}
+                    >
+                      <strong>{task.status === TASK_STATUS.DONE ? 'Commentaire du chef :' : 'Commentaire du chef :'}</strong>{' '}
+                      {task.reviewComment}
+                    </div>
+                  ) : null}
 
                   <div
                     className="mt-4 flex flex-col gap-2 border-t pt-3 text-sm sm:flex-row sm:items-center sm:justify-between"

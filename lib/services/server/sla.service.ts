@@ -11,6 +11,8 @@ interface NotificationContent {
 }
 
 export class SlaService {
+  private static readonly WARNING_THRESHOLD_HOURS = 24
+
   async getConfigs() {
     return prisma.slaConfig.findMany()
   }
@@ -276,7 +278,7 @@ export class SlaService {
       if (!request.slaBreached) {
         needsBreach = true
       }
-    } else if (hoursRemaining <= 6) {
+    } else if (hoursRemaining <= SlaService.WARNING_THRESHOLD_HOURS) {
       newStatus = SlaStatus.WARNING
       if (!request.slaNearingNotified) {
         needsWarning = true
@@ -327,13 +329,24 @@ export class SlaService {
       hoursLeft,
     })
     const sentAt = new Date()
+    const overdueDays = request.slaDeadline
+      ? Math.max(0, Math.floor((sentAt.getTime() - new Date(request.slaDeadline).getTime()) / (1000 * 60 * 60 * 24)))
+      : 0
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    const requestPath = recipient === 'RH'
+      ? `/dashboard/approvals?requestId=${requestId}`
+      : `/dashboard/my-approvals?requestId=${requestId}`
     const emailHtml = buildSlaEmailHtml({
       type,
       requestId,
       requestType: request.type,
+      employeeName: request.employee.name,
       deadline: request.slaDeadline ?? sentAt,
       owner: recipient,
       sentAt,
+      overdueDays,
+      hoursRemaining: Math.max(0, hoursLeft),
+      requestUrl: `${appUrl}${requestPath}`,
     })
 
     if (recipient === 'RH') {

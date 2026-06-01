@@ -95,7 +95,6 @@ export const PRE_AUTH_COOKIE_NAME = 'pre_auth_token';
 export const TRUSTED_DEVICE_COOKIE_NAME = 'trusted_device_token';
 export const SIGNATURE_PLACEHOLDER = 'Signature a venir';
 export const SIGNATURES_PUBLIC_DIR = 'signatures';
-export const RH_TRANSFER_PLACEHOLDER_NAME = 'RH';
 
 // Default pagination values
 export const PAGINATION = {
@@ -125,11 +124,3 @@ export type ProjectStatus = typeof PROJECT_STATUS[keyof typeof PROJECT_STATUS];
 export type EvaluationStatus = typeof EVALUATION_STATUS[keyof typeof EVALUATION_STATUS];
 export type Role = typeof ROLE[keyof typeof ROLE];
 export type ConversationType = typeof CONVERSATION_TYPE[keyof typeof CONVERSATION_TYPE];
-
-export const ROLES = ROLE;
-export const REQUEST_TYPES = REQUEST_TYPE;
-export const STATUSES = REQUEST_STATUS;
-export const COOKIE_NAMES = {
-  SESSION: AUTH_COOKIE_NAME,
-  PRE_AUTH: PRE_AUTH_COOKIE_NAME,
-} as const;

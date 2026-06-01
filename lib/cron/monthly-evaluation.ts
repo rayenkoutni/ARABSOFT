@@ -1,14 +1,14 @@
 import cron from 'node-cron'
 import { prisma } from '@/lib/prisma'
-import { bonusService } from '@/lib/services/server/bonus.service'
 import { startOfMonth, endOfMonth, format } from 'date-fns'
+import { bonusService } from '@/lib/services/server/bonus.service'
 
 /**
  * Monthly Evaluation Cron Job
  * Runs at 23:59 on the last day of every month (28-31)
  * Calculates weighted task score average for each employee
  * Creates Evaluation + EvaluationObjective (VALIDATED)
- * Triggers performance bonus generation
+ * Keeps a monthly evaluation history for reporting
  */
 
 async function runMonthlyEvaluations() {
@@ -102,7 +102,6 @@ async function runMonthlyEvaluations() {
           },
         })
 
-        // Generate bonus if applicable
         await bonusService.createPerformanceBonus(evaluation.id)
 
         createdCount++

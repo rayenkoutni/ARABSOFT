@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { PROJECT_STATUS, ROLE } from '@/lib/constants'
+import { PROJECT_STATUS, ROLE, TASK_STATUS } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -45,7 +45,20 @@ import {
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useToast } from '@/hooks/use-toast'
-
+import {
+  deleteProject,
+  deleteProjectTask,
+  fetchProjectById,
+  fetchProjectTeam,
+  fetchProjectTechnicalSkills,
+  generateProjectTasks,
+  reviewProjectTaskDecision,
+  reviewProjectTasks,
+  saveGeneratedProjectTasks,
+  submitProjectTaskForReview,
+  updateProject,
+  updateProjectTask,
+} from '@/lib/services/client/projects.service'
 interface Task {
   id: string
   title: string
@@ -222,10 +235,10 @@ export default function ProjectDetailPage() {
   // CHEF can create/assign tasks, but only to their team
   // Employees can create tasks for themselves
   // RH is read-only observer
-  const canManageTasks = user?.role === 'CHEF' || user?.role === ROLE.EMPLOYEE
-  const canCreateTasks = user?.role === 'CHEF' || user?.role === ROLE.EMPLOYEE
-  const canShowTaskButtons = user?.role === 'CHEF' // Only CHEF can see Create Task and Generate AI buttons
-  const canManageProject = user?.role === 'CHEF'
+  const canManageTasks = user?.role === ROLE.MANAGER || user?.role === ROLE.EMPLOYEE
+  const canCreateTasks = user?.role === ROLE.MANAGER || user?.role === ROLE.EMPLOYEE
+  const canShowTaskButtons = user?.role === ROLE.MANAGER // Only CHEF can see Create Task and Generate AI buttons
+  const canManageProject = user?.role === ROLE.MANAGER
 
   // Add team member state
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false)
@@ -235,7 +248,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     fetchProject()
     fetchEmployees()
-    if (user?.role === 'CHEF') {
+    if (user?.role === ROLE.MANAGER) {
       void fetchTechnicalSkills()
     }
   }, [projectId, user?.role])
@@ -260,11 +273,12 @@ export default function ProjectDetailPage() {
   const fetchEmployees = async () => {
     try {
       // For CHEF, use the dedicated team endpoint to get only their team members
-      const endpoint = user?.role === 'CHEF' ? '/api/users/team' : '/api/employees'
+      const endpoint = user?.role === ROLE.MANAGER ? '/api/users/team' : '/api/employees'
       const res = await fetch(endpoint)
       if (res.ok) {
         const data = await res.json()
-        setEmployees(Array.isArray(data) ? data : [])
+        const employees = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
+        setEmployees(employees)
       }
     } catch {
       toast({
@@ -350,7 +364,7 @@ export default function ProjectDetailPage() {
     // For drag & drop, keep some restrictions for better UX
     const allowedTransitions = {
       [ROLE.EMPLOYEE]: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW' },
-      CHEF: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW', IN_REVIEW: 'DONE' }
+      [ROLE.MANAGER]: { TODO: 'IN_PROGRESS', IN_PROGRESS: 'IN_REVIEW', IN_REVIEW: 'DONE' }
     }
 
     const userRole = user?.role as typeof ROLE.EMPLOYEE | typeof ROLE.MANAGER
@@ -400,7 +414,7 @@ export default function ProjectDetailPage() {
 
     try {
       const selectedRequiredSkills = taskRequiredSkills.filter((skill) => skill.skillId)
-      if (user?.role === 'CHEF' && hasDuplicateTechnicalSkills(selectedRequiredSkills)) {
+      if (user?.role === ROLE.MANAGER && hasDuplicateTechnicalSkills(selectedRequiredSkills)) {
         setTaskDialogError('Chaque competence technique requise doit etre unique.')
         return
       }
@@ -479,17 +493,7 @@ export default function ProjectDetailPage() {
     setAiTeamMembers([])
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/generate-tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setAiError(data.error || 'Erreur lors de la génération des tâches')
-        return
-      }
+      const data = await generateProjectTasks(projectId)
 
       setGeneratedTasks(
         (data.tasks || []).map((task: GeneratedTask) => ({
@@ -515,27 +519,15 @@ export default function ProjectDetailPage() {
     setIsSubmitting(true)
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/generate-tasks`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tasks: generatedTasks })
-      })
+      await saveGeneratedProjectTasks(projectId, { tasks: generatedTasks })
 
-      if (res.ok) {
-        await fetchProject()
-        setIsAIPreviewOpen(false)
-        setGeneratedTasks([])
-        setAiTeamMembers([])
-      } else {
-        const error = await res.json()
-        toast({
-          title: error.error || 'Erreur lors de la sauvegarde des taches',
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      await fetchProject()
+      setIsAIPreviewOpen(false)
+      setGeneratedTasks([])
+      setAiTeamMembers([])
+    } catch (error: any) {
       toast({
-        title: 'Erreur lors de la sauvegarde des taches',
+        title: error.message || 'Erreur lors de la sauvegarde des taches',
         variant: 'destructive',
       })
     } finally {
@@ -612,28 +604,19 @@ export default function ProjectDetailPage() {
 
     setIsSubmittingReview(true)
     try {
-      const res = await fetch(`/api/tasks/${submittingTask.id}/submit-review`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deliverableLink: deliverableLink || undefined,
-          deliverableNote: deliverableNote || undefined,
-        }),
+      await submitProjectTaskForReview(submittingTask.id, {
+        deliverableLink: deliverableLink || undefined,
+        deliverableNote: deliverableNote || undefined,
       })
 
-      if (res.ok) {
-        setIsSubmitReviewOpen(false)
-        setSubmittingTask(null)
-        setDeliverableLink('')
-        setDeliverableNote('')
-        setSubmitReviewError('')
-        await fetchProject()
-      } else {
-        const data = await res.json()
-        setSubmitReviewError(data.error || "Erreur lors de la soumission")
-      }
-    } catch (err) {
-      setSubmitReviewError("Erreur de connexion au serveur")
+      setIsSubmitReviewOpen(false)
+      setSubmittingTask(null)
+      setDeliverableLink('')
+      setDeliverableNote('')
+      setSubmitReviewError('')
+      await fetchProject()
+    } catch (err: any) {
+      setSubmitReviewError(err.message || "Erreur de connexion au serveur")
     } finally {
       setIsSubmittingReview(false)
     }
@@ -642,28 +625,22 @@ export default function ProjectDetailPage() {
   // New: Review task (CHEF)
   const handleReviewDeliverable = async (taskId: string, decision: 'APPROVE' | 'REJECT', comment?: string) => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/review`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, reviewComment: comment, taskScore: decision === 'APPROVE' ? reviewScore : undefined }),
+      const parsedReviewScore = reviewScore ? Number(reviewScore) : undefined
+
+      await reviewProjectTaskDecision(taskId, {
+        decision,
+        reviewComment: comment,
+        taskScore: decision === 'APPROVE' ? parsedReviewScore : undefined
       })
 
-      if (res.ok) {
-        await fetchProject()
-        setIsReviewDialogOpen(false)
-        setReviewingTask(null)
-        setReviewComment('')
-        setReviewScore('')
-      } else {
-        const data = await res.json()
-        toast({
-          title: data.error || 'Erreur lors de la revision',
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      await fetchProject()
+      setIsReviewDialogOpen(false)
+      setReviewingTask(null)
+      setReviewComment('')
+      setReviewScore('')
+    } catch (error) {
       toast({
-        title: 'Erreur serveur',
+        title: error instanceof Error ? error.message : 'Erreur serveur',
         variant: 'destructive',
       })
     }
@@ -674,33 +651,23 @@ export default function ProjectDetailPage() {
     
     setIsReviewing(true)
     try {
-      const res = await fetch(`/api/projects/${projectId}/tasks/review`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: reviewingTask.id,
-          action,
-          comment: reviewComment,
-          taskScore: action === 'accept' ? reviewScore : undefined,
-        })
+      const parsedReviewScore = reviewScore ? Number(reviewScore) : undefined
+
+      await reviewProjectTasks(projectId, {
+        taskId: reviewingTask.id,
+        action,
+        comment: reviewComment,
+        taskScore: action === 'accept' ? parsedReviewScore : undefined,
       })
 
-      if (res.ok) {
-        await fetchProject()
-        setIsReviewDialogOpen(false)
-        setReviewingTask(null)
-        setReviewComment('')
-        setReviewScore('')
-      } else {
-        const error = await res.json()
-        toast({
-          title: error.error || 'Erreur lors de la revision',
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      await fetchProject()
+      setIsReviewDialogOpen(false)
+      setReviewingTask(null)
+      setReviewComment('')
+      setReviewScore('')
+    } catch (error) {
       toast({
-        title: 'Erreur lors de la revision',
+        title: error instanceof Error ? error.message : 'Erreur lors de la revision',
         variant: 'destructive',
       })
     } finally {
@@ -724,26 +691,14 @@ export default function ProjectDetailPage() {
         return
       }
 
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamMemberIds: [...currentTeamIds, ...newMembers] })
-      })
+      await updateProject(projectId, { teamMemberIds: [...currentTeamIds, ...newMembers] })
 
-      if (res.ok) {
-        await fetchProject()
-        setIsAddMemberOpen(false)
-        setSelectedMembers([])
-      } else {
-        const error = await res.json()
-        toast({
-          title: error.error || "Erreur lors de l'ajout des membres",
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      await fetchProject()
+      setIsAddMemberOpen(false)
+      setSelectedMembers([])
+    } catch (error: any) {
       toast({
-        title: "Erreur lors de l'ajout des membres",
+        title: error.message || "Erreur lors de l'ajout des membres",
         variant: 'destructive',
       })
     } finally {
@@ -757,24 +712,12 @@ export default function ProjectDetailPage() {
     try {
       const currentTeamIds = project?.team.map(t => t.id).filter(id => id !== memberId) || []
       
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamMemberIds: currentTeamIds })
-      })
+      await updateProject(projectId, { teamMemberIds: currentTeamIds })
 
-      if (res.ok) {
-        await fetchProject()
-      } else {
-        const error = await res.json()
-        toast({
-          title: error.error || 'Erreur lors de la suppression du membre',
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      await fetchProject()
+    } catch (error) {
       toast({
-        title: 'Erreur lors de la suppression du membre',
+        title: error instanceof Error ? error.message : 'Erreur lors de la suppression du membre',
         variant: 'destructive',
       })
     }
@@ -784,29 +727,19 @@ export default function ProjectDetailPage() {
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce projet? Cette action est irréversible.')) return
     
     try {
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: 'DELETE'
-      })
+      await deleteProject(projectId)
 
-      if (res.ok) {
-        router.push('/dashboard/projects')
-      } else {
-        const error = await res.json()
-        toast({
-          title: error.error || 'Erreur lors de la suppression du projet',
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      router.push('/dashboard/projects')
+    } catch (error) {
       toast({
-        title: 'Erreur lors de la suppression du projet',
+        title: error instanceof Error ? error.message : 'Erreur lors de la suppression du projet',
         variant: 'destructive',
       })
     }
   }
 
   // Filter employees for CHEF - only show their team members
-  const availableEmployees = user?.role === 'CHEF'
+  const availableEmployees = user?.role === ROLE.MANAGER
     ? (employees || []).filter(e => e.managerId === user.id)
     : (employees || [])
 
@@ -896,7 +829,7 @@ export default function ProjectDetailPage() {
               }>
                 {STATUS_LABELS[project.status] || project.status}
               </Badge>
-              {user?.role === 'RH' && (
+              {user?.role === ROLE.HR && (
                 <Badge variant="outline" className="text-blue-600 border-blue-300">
                   Observateur
                 </Badge>
@@ -1013,7 +946,7 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="assignee">
-                      Assigné à {user?.role === 'CHEF' && '(votre équipe)'}{user?.role === ROLE.EMPLOYEE && '(vous-même)'}
+                      Assigné à {user?.role === ROLE.MANAGER && '(votre équipe)'}{user?.role === ROLE.EMPLOYEE && '(vous-même)'}
                     </Label>
                     <Select
                       value={taskForm.assigneeId}
@@ -1033,7 +966,7 @@ export default function ProjectDetailPage() {
                         )}
                       </SelectContent>
                     </Select>
-                    {user?.role === 'CHEF' && selectedAssigneeUpcomingLeave && (
+                    {user?.role === ROLE.MANAGER && selectedAssigneeUpcomingLeave && (
                       <div
                         className="rounded-lg border px-3 py-2 text-sm"
                         style={{
@@ -1063,7 +996,7 @@ export default function ProjectDetailPage() {
                     onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
                   />
                 </div>
-                {user?.role === 'CHEF' && (
+                {user?.role === ROLE.MANAGER && (
                   <div className="space-y-4 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)' }}>
                     <div className="space-y-1">
                       <Label>Competences techniques requises</Label>
@@ -1468,7 +1401,7 @@ export default function ProjectDetailPage() {
               <div className="flex-1 overflow-y-auto p-2 space-y-2">
                 {tasks.map(task => {
                    const canDrag = 
-                     (user?.role === 'CHEF' && project.team.some(t => t.id === user.id)) ||
+                     (user?.role === ROLE.MANAGER && project.team.some(t => t.id === user.id)) ||
                      (user?.role === ROLE.EMPLOYEE && 
                       task.assigneeId === user.id && 
                       task.status !== 'IN_REVIEW')
@@ -1492,9 +1425,9 @@ export default function ProjectDetailPage() {
                             {canDrag && <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
                             <span className="font-medium text-sm truncate">{task.title}</span>
                           </div>
-                           {user?.role === 'CHEF' && (
+                           {user?.role === ROLE.MANAGER && (
                             <div className="flex items-center gap-1 flex-shrink-0">
-                              {task.submittedForReview && user?.role === 'CHEF' && (
+                              {task.submittedForReview && user?.role === ROLE.MANAGER && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1524,7 +1457,7 @@ export default function ProjectDetailPage() {
                          )}
 
                          {/* Deliverable info for CHEF on IN_REVIEW */}
-                         {task.status === 'IN_REVIEW' && (task.deliverableLink || task.deliverableNote) && user?.role === 'CHEF' && (
+                         {task.status === 'IN_REVIEW' && (task.deliverableLink || task.deliverableNote) && user?.role === ROLE.MANAGER && (
                            <div className="text-xs bg-amber-50 dark:bg-amber-950 p-2 rounded border border-amber-200">
                              {task.deliverableLink && (
                                <a 
@@ -1787,7 +1720,7 @@ export default function ProjectDetailPage() {
                     {status === 'TODO' && 'À faire'}
                     {status === 'IN_PROGRESS' && 'En cours'}
                      {status === 'IN_REVIEW' && 'En révision'}
-                     {status === 'DONE' && 'Terminé'}
+                     {status === TASK_STATUS.DONE && 'Terminé'}
                   </div>
                   {isCurrent && (
                     <div className="text-[11px] text-muted-foreground mt-1">Statut actuel</div>

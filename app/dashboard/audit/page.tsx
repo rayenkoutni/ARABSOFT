@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ROLE } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { exportAuditLogs, fetchAuditLogs } from '@/lib/services/client/audit.service'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrandedLoading } from '@/components/ui/spinner'
@@ -84,12 +85,14 @@ export default function AuditPage() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [total, setTotal] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchLogs = useCallback(async () => {
     if (!user) return
 
     try {
       setIsLoading(true)
+      setError(null)
       const params = new URLSearchParams({
         page: page.toString(),
         limit: '20',
@@ -97,13 +100,12 @@ export default function AuditPage() {
       if (searchTerm) params.append('search', searchTerm)
       if (selectedEntity !== 'all') params.append('entity', selectedEntity)
 
-      const res = await fetch(`/api/audit-logs?${params}`)
-      if (res.ok) {
-        const data = await res.json()
-        setLogs(data.logs)
-        setTotalPages(data.totalPages)
-        setTotal(data.total)
-      }
+      const data = await fetchAuditLogs(params.toString())
+      setLogs(data.logs)
+      setTotalPages(data.totalPages)
+      setTotal(data.total)
+    } catch {
+      setError('Impossible de charger les donnees')
     } finally {
       setIsLoading(false)
     }
@@ -130,11 +132,7 @@ export default function AuditPage() {
         if (selectedEntity !== 'all') params.append('entity', selectedEntity)
       }
 
-      const res = await fetch(`/api/audit-logs/export?${params.toString()}`)
-
-      if (!res.ok) {
-        throw new Error('Export failed')
-      }
+      const res = await exportAuditLogs(params.toString())
 
       const blob = await res.blob()
       const objectUrl = window.URL.createObjectURL(blob)
@@ -217,6 +215,12 @@ export default function AuditPage() {
           Exporter Excel
         </Button>
       </div>
+
+      {error && (
+        <div className="text-destructive text-sm p-4 rounded border border-destructive/20">
+          {error}
+        </div>
+      )}
 
       <div className="rounded-md border">
         <Table>

@@ -16,6 +16,7 @@ interface AuthContextType {
   switchRole?: (role: UserRole) => void
   socket: Socket | null
   setOtpVerified: (verified: boolean) => void
+  updateCurrentUser: (patch: Partial<User>) => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -166,10 +167,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const switchRole = (role: UserRole) => {
     if (!user) return
+    setUser((currentUser) => (currentUser ? { ...currentUser, role } : currentUser))
+  }
 
-    const updatedUser = { ...user, role }
-    setUser(updatedUser)
-    localStorage.setItem('hr_user', JSON.stringify(updatedUser))
+  const updateCurrentUser = (patch: Partial<User>) => {
+    setUser((currentUser) => (currentUser ? { ...currentUser, ...patch } : currentUser))
   }
 
   return (
@@ -186,6 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         switchRole,
         socket,
         setOtpVerified: setIsOtpVerified,
+        updateCurrentUser,
       }}
     >
       {children}

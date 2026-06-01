@@ -1,5 +1,6 @@
 import { Request, RequestDocumentType, RequestHistoryEntry, RequestType, UserRole } from "../types";
 import { APPROVAL_TYPE, REQUEST_STATUS } from "../constants";
+import { AppError } from "../errors";
 
 export interface WorkflowActionStep {
   kind: "action";
@@ -54,7 +55,7 @@ class RequestService {
       }
 
       const text = await this.extractErrorMessage(res);
-      throw new Error(`Request failed (${res.status}): ${text}`);
+      throw new AppError(`Request failed (${res.status}): ${text}`, res.status);
     }
 
     return res.json() as Promise<T>;
@@ -97,6 +98,29 @@ class RequestService {
         documentType: payload.documentType ?? null,
         reason: payload.reason ?? null,
       }),
+    });
+  }
+
+  async updateRequest(id: string, payload: {
+    type: RequestType;
+    comment: string;
+    isDraft?: boolean;
+    startDate?: string | null;
+    endDate?: string | null;
+    documentType?: RequestDocumentType | null;
+    reason?: string | null;
+  }) {
+    return this.apiFetch<Request>(`/api/requests/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteRequest(id: string) {
+    return this.apiFetch<{ success: true }>(`/api/requests/${id}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
     });
   }
 

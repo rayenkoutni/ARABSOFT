@@ -9,8 +9,6 @@ export * from './contexts/notification.context';
 
 // Utils
 export * from './utils/common.utils';
-export * from './utils/format.utils';
-export * from './utils/avatar.utils';
 export * from './constants';
 
 // Services

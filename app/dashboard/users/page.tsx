@@ -5,7 +5,6 @@ import { ROLE } from '@/lib/constants'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Input } from '@/components/ui/input'
@@ -47,6 +46,16 @@ import {
   type TechnicalSkillCatalogItem,
 } from '@/lib/skills/client'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { fetchSkills } from '@/lib/services/client/skills.service'
+import {
+  createUser,
+  deleteUser,
+  fetchDeleteImpact,
+  fetchSalaryGrades,
+  fetchUsers,
+  updateUser,
+} from '@/lib/services/client/users.service'
+import { formatSalaryGradeLabel } from '@/lib/utils/salary-grade'
 
 interface Employee {
   id: string
@@ -73,12 +82,53 @@ interface SalaryGrade {
   description?: string | null
 }
 
+function mapSalaryGradeListResponse(payload: unknown): SalaryGrade[] {
+  const items = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown[] }).data)
+      ? (payload as { data: unknown[] }).data
+      : []
+
+  return items
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : '',
+      role: typeof item.role === 'string' ? item.role : '',
+      level: typeof item.level === 'number' ? item.level : 0,
+      baseSalary: typeof item.baseSalary === 'number' ? item.baseSalary : 0,
+      description: typeof item.description === 'string' ? item.description : null,
+    }))
+    .filter((grade) => grade.id && grade.role)
+}
+
+interface DeleteImpact {
+  employee: {
+    id: string
+    name: string
+    role: string
+    managerId: string | null
+  }
+  managedProjects: Array<{ id: string; name: string }>
+  availableManagers: Array<{ id: string; name: string }>
+  activeAssignedTasks: Array<{
+    id: string
+    title: string
+    project: { id: string; name: string } | null
+  }>
+}
+
 function mapEmployeeListResponse(payload: unknown): Employee[] {
-  if (!Array.isArray(payload)) {
+  const items = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown[] }).data)
+      ? (payload as { data: unknown[] }).data
+      : []
+
+  if (!Array.isArray(items)) {
     return []
   }
 
-  return payload
+  return items
     .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     .map((item) => ({
       id: typeof item.id === 'string' ? item.id : '',
@@ -128,7 +178,7 @@ function salaryGradeLabel(grade?: SalaryGrade | undefined) {
     return 'Aucun grade'
   }
 
-  return `${grade.role} - Niveau ${grade.level} (${grade.baseSalary} TND)`
+  return formatSalaryGradeLabel(grade)
 }
 
 export default function UsersPage() {
@@ -150,6 +200,9 @@ export default function UsersPage() {
 
   const [deleteEmployee, setDeleteEmployee] = useState<Employee | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteImpact, setDeleteImpact] = useState<DeleteImpact | null>(null)
+  const [isLoadingDeleteImpact, setIsLoadingDeleteImpact] = useState(false)
+  const [replacementManagerId, setReplacementManagerId] = useState('')
 
   const [resetInfo, setResetInfo] = useState<{ name: string; message: string } | null>(null)
 
@@ -212,15 +265,9 @@ export default function UsersPage() {
     try {
       setIsLoading(true)
       setListError('')
-      const res = await fetch('/api/employees')
-      if (res.ok) {
-        const data = await res.json()
-        setEmployees(mapEmployeeListResponse(data))
-        return
-      }
-
-      setEmployees([])
-      setListError('Impossible de charger la liste des collaborateurs')
+      const response = await fetchUsers()
+      const employees = mapEmployeeListResponse(response)
+      setEmployees(employees)
     } catch {
       setEmployees([])
       setListError('Impossible de charger la liste des collaborateurs')
@@ -232,11 +279,8 @@ export default function UsersPage() {
   const loadTechnicalSkillsCatalog = async () => {
     try {
       setIsSkillsLoading(true)
-      const res = await fetch('/api/skills?type=TECHNICAL', { cache: 'no-store' })
-      if (res.ok) {
-        const data = await res.json()
-        setTechnicalSkillsCatalog(mapTechnicalSkillCatalogItems(data))
-      }
+      const data = await fetchSkills('?type=TECHNICAL')
+      setTechnicalSkillsCatalog(mapTechnicalSkillCatalogItems(data))
     } finally {
       setIsSkillsLoading(false)
     }
@@ -244,11 +288,8 @@ export default function UsersPage() {
 
   const loadSalaryGrades = async () => {
     try {
-      const res = await fetch('/api/salary-grades', { cache: 'no-store' })
-      if (res.ok) {
-        const data = await res.json()
-        setSalaryGrades(data)
-      }
+      const data = await fetchSalaryGrades()
+      setSalaryGrades(mapSalaryGradeListResponse(data))
     } catch {
       // Grades remain optional in the UI.
     }
@@ -272,6 +313,9 @@ export default function UsersPage() {
 
   const chefs = employees.filter((employee) => employee.role === ROLE.MANAGER)
   const collaborators = employees.filter((employee) => employee.role === ROLE.EMPLOYEE)
+  const availableCreateSalaryGrades = formData.role
+    ? salaryGrades.filter((grade) => grade.role === formData.role)
+    : salaryGrades
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -279,6 +323,11 @@ export default function UsersPage() {
 
     if (!formData.name || !formData.email || !formData.role || !formData.hireDate) {
       setError("Le nom, l'email, le role et la date d'embauche sont obligatoires")
+      return
+    }
+
+    if (formData.role && availableCreateSalaryGrades.length === 0) {
+      setError(`Aucun grade salarial n'est configure pour le role ${formData.role}. Ajoutez d'abord un grade pour ce role.`)
       return
     }
 
@@ -308,29 +357,20 @@ export default function UsersPage() {
       }
 
       setIsSubmitting(true)
-      const res = await fetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          managerId: formData.managerId || null,
-          technicalSkills:
-            formData.role === ROLE.EMPLOYEE
-              ? formData.technicalSkills.filter((skill) => skill.skillId)
-              : [],
-        }),
+      const data = await createUser({
+        ...formData,
+        managerId: formData.managerId || null,
+        technicalSkills:
+          formData.role === ROLE.EMPLOYEE
+            ? formData.technicalSkills.filter((skill) => skill.skillId)
+            : [],
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || 'Erreur lors de la creation')
-        return
-      }
 
       setSuccessInfo({ name: data.name, email: data.email, message: data.message })
       setFormData(getDefaultEmployeeCreateFormData())
-      loadEmployees()
-    } catch {
-      setError('Erreur de connexion au serveur')
+      void loadEmployees()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Erreur de connexion au serveur')
     } finally {
       setIsSubmitting(false)
     }
@@ -363,36 +403,36 @@ export default function UsersPage() {
       return
     }
 
-    if (!editFormData.salaryGradeId) {
-      setEditError('Le grade salarial est obligatoire')
-      return
-    }
-
     if (isFutureDateInputValue(editFormData.hireDate)) {
       setEditError("La date d'embauche ne peut pas etre dans le futur")
       return
     }
 
+    const availableEditSalaryGrades = editFormData.role
+      ? salaryGrades.filter((grade) => grade.role === editFormData.role)
+      : salaryGrades
+
+    if (editFormData.role && availableEditSalaryGrades.length === 0) {
+      setEditError(`Aucun grade salarial n'est configure pour le role ${editFormData.role}. Ajoutez d'abord un grade pour ce role.`)
+      return
+    }
+
+    if (!editFormData.salaryGradeId) {
+      setEditError('Le grade salarial est obligatoire')
+      return
+    }
+
     try {
       setIsSubmitting(true)
-      const res = await fetch(`/api/employees/${editEmployee.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...editFormData,
-          managerId: editFormData.managerId || null,
-        }),
+      await updateUser(editEmployee.id, {
+        ...editFormData,
+        managerId: editFormData.managerId || null,
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setEditError(data.error || 'Erreur lors de la modification')
-        return
-      }
 
       setEditEmployee(null)
-      loadEmployees()
-    } catch {
-      setEditError('Erreur de connexion au serveur')
+      void loadEmployees()
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'Erreur de connexion au serveur')
     } finally {
       setIsSubmitting(false)
     }
@@ -402,13 +442,8 @@ export default function UsersPage() {
     if (!editEmployee) return
     try {
       setIsSubmitting(true)
-      const res = await fetch(`/api/employees/${editEmployee.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resetPassword: true }),
-      })
-      const data = await res.json()
-      if (res.ok && data.message) {
+      const data = await updateUser(editEmployee.id, { resetPassword: true })
+      if (data.message) {
         setEditEmployee(null)
         setResetInfo({ name: data.name, message: data.message })
       }
@@ -417,19 +452,40 @@ export default function UsersPage() {
     }
   }
 
-  const handleDelete = async () => {
-    if (!deleteEmployee) return
+  const openDeleteDialog = async (employee: Employee) => {
+    setListError('')
+    setIsLoadingDeleteImpact(true)
     try {
-      setIsDeleting(true)
-      const res = await fetch(`/api/employees/${deleteEmployee.id}`, { method: 'DELETE' })
-      if (res.ok) {
-        setDeleteEmployee(null)
-        loadEmployees()
-      }
+      const data = await fetchDeleteImpact(employee.id)
+      setDeleteEmployee(employee)
+      setDeleteImpact(data)
+      setReplacementManagerId('')
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : "Impossible de preparer la suppression de l'utilisateur")
     } finally {
-      setIsDeleting(false)
+      setIsLoadingDeleteImpact(false)
     }
   }
+
+  const handleDelete = async () => {
+     if (!deleteEmployee) return
+     setListError('')
+     try {
+       setIsDeleting(true)
+       const payload = deleteEmployee.role === ROLE.MANAGER
+         ? { replacementManagerId: replacementManagerId || null }
+         : {}
+       await deleteUser(deleteEmployee.id, payload)
+       setDeleteEmployee(null)
+       setDeleteImpact(null)
+       setReplacementManagerId('')
+       void loadEmployees()
+     } catch (error) {
+       setListError(error instanceof Error ? error.message : 'Erreur de connexion au serveur')
+     } finally {
+       setIsDeleting(false)
+     }
+   }
 
   const addTechnicalSkill = () => {
     setFormData((current) => ({
@@ -455,6 +511,8 @@ export default function UsersPage() {
     setSuccessInfo(null)
     setEditEmployee(null)
     setDeleteEmployee(null)
+    setDeleteImpact(null)
+    setReplacementManagerId('')
     setResetInfo(null)
     setError('')
     setEditError('')
@@ -556,7 +614,7 @@ export default function UsersPage() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => setDeleteEmployee(employee)}
+                              onClick={() => openDeleteDialog(employee)}
                               title="Supprimer"
                               disabled={employee.id === user.id}
                               style={employee.id !== user.id ? { color: '#EF4444' } : {}}
@@ -895,19 +953,96 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog
-        open={!!deleteEmployee}
-        title="Supprimer le collaborateur"
-        message={
-          deleteEmployee
-            ? `Etes-vous sur de vouloir supprimer ${deleteEmployee.name} ? Cette action est irreversible et supprimera toutes ses demandes et notifications.`
-            : ''
-        }
-        confirmLabel="Supprimer"
-        isLoading={isDeleting}
-        onCancel={() => setDeleteEmployee(null)}
-        onConfirm={handleDelete}
-      />
+      <Dialog open={!!deleteEmployee} onOpenChange={(open) => { if (!open) closeAllDialogs() }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Supprimer le collaborateur</DialogTitle>
+            <DialogDescription>
+              {deleteEmployee
+                ? `Etes-vous sur de vouloir supprimer ${deleteEmployee.name} ? Cette action est irreversible.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingDeleteImpact ? (
+            <div className="py-6 text-center">
+              <BrandedLoading />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {deleteEmployee?.role === ROLE.MANAGER && (deleteImpact?.managedProjects.length ?? 0) > 0 && (
+                <div className="space-y-3 rounded-lg border p-4" style={{ borderColor: '#FCD34D', backgroundColor: '#FFFBEB' }}>
+                  <div className="space-y-1">
+                    <p className="font-medium" style={{ color: '#92400E' }}>
+                      Ce chef gere encore des projets en cours
+                    </p>
+                    <p className="text-sm" style={{ color: '#92400E' }}>
+                      Choisissez un autre chef pour reprendre ces projets avant la suppression.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nouveau chef responsable</Label>
+                    <Select value={replacementManagerId} onValueChange={setReplacementManagerId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selectionner un chef" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {deleteImpact?.availableManagers.map((manager) => (
+                          <SelectItem key={manager.id} value={manager.id}>{manager.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium" style={{ color: '#92400E' }}>Projets concernes</p>
+                    <div className="max-h-40 space-y-2 overflow-y-auto rounded-md bg-white p-3">
+                      {deleteImpact?.managedProjects.map((project) => (
+                        <p key={project.id} className="text-sm" style={{ color: 'var(--color-text)' }}>
+                          {project.name}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {deleteEmployee?.role === ROLE.EMPLOYEE && (deleteImpact?.activeAssignedTasks.length ?? 0) > 0 && (
+                <div className="space-y-3 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
+                  <div className="space-y-1">
+                    <p className="font-medium" style={{ color: 'var(--color-text)' }}>
+                      Taches projet detectees
+                    </p>
+                    <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                      Les taches de ce collaborateur seront redistribuees automatiquement et le chef recevra une notification pour les ajuster depuis la section Projets.
+                    </p>
+                  </div>
+                  <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border p-3" style={{ borderColor: 'var(--color-border)' }}>
+                    {deleteImpact?.activeAssignedTasks.map((task) => (
+                      <p key={task.id} className="text-sm" style={{ color: 'var(--color-text)' }}>
+                        {task.title}{task.project ? ` - ${task.project.name}` : ''}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={closeAllDialogs}>
+                  Annuler
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={isDeleting || (deleteEmployee?.role === ROLE.MANAGER && (deleteImpact?.managedProjects.length ?? 0) > 0 && !replacementManagerId)}
+                  style={{ backgroundColor: '#DC2626', color: 'white' }}
+                >
+                  {isDeleting ? 'Suppression...' : 'Supprimer'}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!resetInfo} onOpenChange={(open) => { if (!open) setResetInfo(null) }}>
         <DialogContent className="max-w-md">

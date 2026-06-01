@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/services/prisma.service';
 import { socketService } from '@/lib/services/server/socket.service';
 import { ROLE } from '@/lib/constants';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, Notification } from '@prisma/client';
+import type { PaginationParams, PaginatedResult } from '@/lib/types/pagination';
 
 function buildNonChatNotificationWhere(employeeId: string): Prisma.NotificationWhereInput {
   return {
@@ -53,12 +54,21 @@ class NotificationServerService {
     await this.createNotification(managerId, title, message);
   }
 
-  async getUserNotifications(employeeId: string) {
-    return prisma.notification.findMany({
-      where: buildNonChatNotificationWhere(employeeId),
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    });
+  async getUserNotifications(employeeId: string, pagination: PaginationParams = {}): Promise<PaginatedResult<Notification>> {
+    const { page = 1, limit = 30 } = pagination;
+    const where = buildNonChatNotificationWhere(employeeId);
+    
+    const [data, total] = await prisma.$transaction([
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.notification.count({ where }),
+    ]);
+
+    return { data, total, page, limit, hasMore: page * limit < total };
   }
 
   async clearUserNotifications(employeeId: string) {

@@ -29,16 +29,24 @@ export function buildSlaEmailHtml({
   type,
   requestId,
   requestType,
+  employeeName,
   deadline,
   owner,
   sentAt,
+  overdueDays,
+  hoursRemaining,
+  requestUrl,
 }: {
   type: 'WARNING' | 'BREACH' | 'ESCALATION';
   requestId: string;
   requestType: string;
+  employeeName: string;
   deadline: Date | string;
   owner: string;
   sentAt: Date | string;
+  overdueDays?: number;
+  hoursRemaining?: number;
+  requestUrl?: string | null;
 }) {
   const normalizedType = type === 'WARNING' ? 'WARNING' : type === 'ESCALATION' ? 'ESCALATION' : 'BREACH';
   const title =
@@ -61,6 +69,9 @@ export function buildSlaEmailHtml({
     normalizedType === 'WARNING' ? "Echeance SLA" : "Echeance SLA depassee";
   const timestampLabel =
     normalizedType === 'WARNING' ? "Horodatage de l'avertissement" : 'Horodatage de notification';
+  const normalizedOverdueDays = Math.max(0, Math.floor(overdueDays ?? 0));
+  const normalizedHoursRemaining = Math.max(0, Math.floor(hoursRemaining ?? 0));
+  const requestReference = `#${requestId.slice(0, 8).toUpperCase()}`;
 
   return `<div style="font-family: system-ui, sans-serif, Arial; font-size: 14px; color: #212121">
   <div style="max-width: 600px; margin: auto">
@@ -77,13 +88,17 @@ export function buildSlaEmailHtml({
       <div style="background-color: #F4F6FA; border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; border-left: 4px solid #F5A623;">
         <p style="margin: 0 0 12px; font-weight: 600; color: #1B3A6B; font-size: 15px;">Details de la demande</p>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-          <tr><td style="padding: 6px 0; color: #64748B; width: 42%;">Reference de demande</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">#${escapeHtml(requestId.slice(0, 8).toUpperCase())}</td></tr>
+          <tr><td style="padding: 6px 0; color: #64748B; width: 42%;">Reference de demande</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(requestReference)}</td></tr>
+          <tr><td style="padding: 6px 0; color: #64748B;">Collaborateur</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(employeeName)}</td></tr>
           <tr><td style="padding: 6px 0; color: #64748B;">Type de demande</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(requestType)}</td></tr>
+          ${normalizedType === 'WARNING' ? `<tr><td style="padding: 6px 0; color: #64748B;">Temps restant</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">Expire dans ${escapeHtml(String(normalizedHoursRemaining))} heure(s)</td></tr>` : ''}
           <tr><td style="padding: 6px 0; color: #64748B;">${escapeHtml(timingLabel)}</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(formatDateTime(deadline))}</td></tr>
+          ${normalizedType === 'WARNING' ? '' : `<tr><td style="padding: 6px 0; color: #64748B;">Retard cumule</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(String(normalizedOverdueDays))} jour(s)</td></tr>`}
           <tr><td style="padding: 6px 0; color: #64748B;">Responsable actuel</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(owner)}</td></tr>
           <tr><td style="padding: 6px 0; color: #64748B;">${escapeHtml(timestampLabel)}</td><td style="padding: 6px 0; color: #1E293B; font-weight: 600;">${escapeHtml(formatDateTime(sentAt))}</td></tr>
         </table>
       </div>
+      ${requestUrl ? `<div style="text-align: center; margin-bottom: 24px;"><a href="${escapeHtml(requestUrl)}" target="_blank" style="display: inline-block; background-color: #1B3A6B; color: #ffffff; text-decoration: none; padding: 14px 36px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.02em;">Ouvrir la demande ${escapeHtml(requestReference)}</a></div>` : ''}
       <div style="background-color: #FFF7E8; border: 1px solid #F5D18A; border-radius: 12px; padding: 16px 18px; margin-bottom: 24px;">
         <p style="margin: 0; color: #7C4A03; font-size: 14px; line-height: 1.6; font-weight: 600;">${escapeHtml(cta)}</p>
       </div>

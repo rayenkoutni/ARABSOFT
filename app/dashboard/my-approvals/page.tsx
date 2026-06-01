@@ -29,6 +29,11 @@ import { requestService } from '@/lib'
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 
+function unwrapRequestsResponse(response: Request[] | { data?: Request[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
+
 function MyApprovalsContent() {
   const { user } = useCurrentUser()
   const searchParams = useSearchParams()
@@ -45,6 +50,7 @@ function MyApprovalsContent() {
   const [searchTerm, setSearchTerm] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   const openRequestForExamination = async (requestId: string) => {
     try {
@@ -66,7 +72,10 @@ function MyApprovalsContent() {
 
       try {
         setIsLoading(true)
-        const data = await requestService.getManagerPendingRequests(user.id)
+        setError(null)
+        const data = unwrapRequestsResponse(
+          await requestService.getManagerPendingRequests(user.id) as Request[] | { data?: Request[] }
+        )
         setRequests(data)
 
         const requestId = searchParams.get('requestId')
@@ -76,6 +85,8 @@ function MyApprovalsContent() {
             await openRequestForExamination(target.id)
           }
         }
+      } catch {
+        setError('Impossible de charger les donnees')
       } finally {
         setIsLoading(false)
       }
@@ -220,6 +231,7 @@ function MyApprovalsContent() {
               type="date"
               value={startDate}
               onChange={(event) => setStartDate(event.target.value)}
+              max={endDate || undefined}
               className="pr-10"
             />
             {startDate && (
@@ -228,6 +240,7 @@ function MyApprovalsContent() {
                 variant="ghost"
                 size="icon"
                 className="absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2"
+                aria-label="Effacer la date"
                 onClick={() => setStartDate('')}
               >
                 <X className="h-4 w-4" />
@@ -242,6 +255,7 @@ function MyApprovalsContent() {
               type="date"
               value={endDate}
               onChange={(event) => setEndDate(event.target.value)}
+              min={startDate || undefined}
               className="pr-10"
             />
             {endDate && (
@@ -250,6 +264,7 @@ function MyApprovalsContent() {
                 variant="ghost"
                 size="icon"
                 className="absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2"
+                aria-label="Effacer la date"
                 onClick={() => setEndDate('')}
               >
                 <X className="h-4 w-4" />

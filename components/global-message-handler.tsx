@@ -59,7 +59,7 @@ export function GlobalMessageHandler() {
       oscillator.start(ctx.currentTime)
       oscillator.stop(ctx.currentTime + 0.2)
     } catch (error) {
-      console.error('Error playing notification sound:', error)
+      console.error('[GlobalMessageHandler]', error)
     }
   }
 

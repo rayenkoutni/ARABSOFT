@@ -126,7 +126,7 @@ export function OTPVerificationModal({
     try {
       await onSendCode()
     } catch (e) {
-      console.error(e)
+      console.error('[OTPVerificationModal]', e)
     }
   }, [onSendCode])
 

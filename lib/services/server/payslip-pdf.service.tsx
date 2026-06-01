@@ -21,6 +21,7 @@ import {
   parseBonusDetails,
 } from "@/lib/payslip"
 import { getRhSignatureForDocument } from "@/lib/utils/get-rh-signature"
+import { formatSalaryGradeLabel } from "@/lib/utils/salary-grade"
 import { prisma } from "@/lib/prisma"
 import { PayslipPeriodType, Role } from "@prisma/client"
 import { AppError } from "@/lib/errors"
@@ -84,6 +85,7 @@ export async function getAuthorizedPayslipPdfPayload(
               role: true,
               level: true,
               baseSalary: true,
+              description: true,
             },
           },
         },
@@ -108,7 +110,11 @@ export async function getAuthorizedPayslipPdfPayload(
     ? getMonthlyBounds(payslip.period)
     : getAnnualBounds(payslip.period)
   const gradeLabel = payslip.employee.salaryGrade
-    ? `${payslip.employee.salaryGrade.role} - Niveau ${payslip.employee.salaryGrade.level}`
+    ? formatSalaryGradeLabel({
+      role: payslip.employee.salaryGrade.role,
+      level: payslip.employee.salaryGrade.level,
+      description: payslip.employee.salaryGrade.description,
+    })
     : payslip.employee.role
   const rhApproval = payslip.requestId
     ? await prisma.requestHistory.findFirst({

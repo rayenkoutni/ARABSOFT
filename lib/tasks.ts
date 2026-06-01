@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient, SkillType } from "@prisma/client"
 import { z } from "zod"
 import { skillLevelSchema } from "./skills"
+import { isValidDateOnlyInput } from "./leave-request"
 
 type TaskDbClient = PrismaClient | Prisma.TransactionClient
 
@@ -39,7 +40,10 @@ export const taskCreateInputSchema = z.object({
   description: trimmedOptionalString,
   priority: z.enum(taskPriorities).optional().default("MEDIUM"),
   assigneeId: z.string().uuid("Le collaborateur assigne est invalide."),
-  dueDate: trimmedOptionalString,
+  dueDate: trimmedOptionalString.refine(
+    (value) => value == null || isValidDateOnlyInput(value),
+    "La date d'echeance est invalide."
+  ),
   requiredSkills: z.array(taskRequiredSkillInputSchema).optional().default([]),
 }).superRefine((value, ctx) => {
   const seen = new Set<string>()

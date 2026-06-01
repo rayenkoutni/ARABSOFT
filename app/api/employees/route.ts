@@ -1,14 +1,16 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { handleApiError, apiError } from "@/lib/utils/api-response";
 import { requireAuth } from "@/lib/services/server/auth.service";
 import { employeesService } from "@/lib/services/server/employees.service";
 import { employeeCreateInputSchema } from "@/lib/skills";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
     const user = await requireAuth(req);
-    const employees = await employeesService.listEmployees(user);
+    const page = parseInt(req.nextUrl.searchParams.get("page") ?? "1");
+    const limit = parseInt(req.nextUrl.searchParams.get("limit") ?? "50");
+    const employees = await employeesService.listEmployees(user, { page, limit });
     return NextResponse.json(employees);
   } catch (error) {
     return handleApiError(error, "Echec du chargement des collaborateurs");

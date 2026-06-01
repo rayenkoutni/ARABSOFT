@@ -4,15 +4,21 @@ import { requireAuth } from "@/lib/services/server/auth.service";
 import { tasksService, TaskInputError } from "@/lib/services/server/tasks.service";
 import { taskCreateInputSchema } from "@/lib/tasks";
 import { apiError, handleApiError } from "@/lib/utils/api-response";
+import { requireBoolean, requireString, requireUuid } from "@/lib/utils/validate";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireAuth(req, ["CHEF", "COLLABORATEUR"]);
     const { id } = await params;
     const body = await req.json();
-    const result = body.taskId
-      ? await tasksService.updateProjectTaskStatus(user, id, body.taskId, body.status)
-      : await tasksService.createTask(user, id, taskCreateInputSchema.parse(body));
+    const result = body.taskId && (body.assigneeId || body.useAi)
+      ? await tasksService.reassignProjectTask(user, id, requireUuid(body.taskId, "taskId"), {
+          assigneeId: body.assigneeId == null ? null : requireUuid(body.assigneeId, "assigneeId"),
+          useAi: body.useAi === undefined ? false : requireBoolean(body.useAi, "useAi"),
+        })
+      : body.taskId
+        ? await tasksService.updateProjectTaskStatus(user, id, requireUuid(body.taskId, "taskId"), requireString(body.status, "status"))
+        : await tasksService.createTask(user, id, taskCreateInputSchema.parse(body));
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof ZodError) {

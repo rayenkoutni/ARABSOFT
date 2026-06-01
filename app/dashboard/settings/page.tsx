@@ -1,9 +1,19 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { REQUEST_TYPE, ROLE } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import {
+  deleteSignature as deleteRhSignature,
+  fetchProfile,
+  fetchSignature,
+  fetchSlaConfig,
+  transferRhAccess,
+  updatePassword,
+  updateProfile,
+  updateSlaConfig,
+} from '@/lib/services/client/settings.service'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,73 +22,115 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SignatureUploader } from '@/components/ui/signature-uploader'
-import { User, Bell, Lock, Palette, Eye, EyeOff, Save, X, Edit2, CheckCircle2, Clock } from 'lucide-react'
+import { User, Bell, Lock, Palette, Eye, EyeOff, Save, X, Edit2, CheckCircle2, Clock, Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 
+type SlaConfig = {
+  id: string
+  requestType: string
+  maxHours: number
+  description?: string | null
+}
+
 export default function SettingsPage() {
-  const { user } = useCurrentUser()
+  const { user, updateCurrentUser } = useCurrentUser()
   const router = useRouter()
   const { toast } = useToast()
-  
-  if (!user) return null
-
-  // ---- SECTION 1: PROFILE PICTURE ----
-  const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
-  const [signatureUrl, setSignatureUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    const checkAvatar = async () => {
-      try {
-        const profileRes = await fetch('/api/employees/profile')
-        if (profileRes.ok) {
-          const data = await profileRes.json()
-          if (data.avatar) {
-            setAvatarSrc(data.avatar)
-          }
-        }
-
-        if (user.role === ROLE.HR) {
-          const signatureRes = await fetch('/api/rh/signature')
-          if (signatureRes.ok) {
-            const signatureData = await signatureRes.json()
-            setSignatureUrl(typeof signatureData.signatureUrl === 'string' ? signatureData.signatureUrl : null)
-          }
-        }
-      } catch {
-        toast({
-          description: 'Impossible de charger le profil',
-          className: 'bg-red-500 text-white border-none',
-          duration: 3000,
-        })
-      }
-    }
-    checkAvatar()
-  }, [toast, user.role])
-
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null)
   const [pendingAvatar, setPendingAvatar] = useState<string | null>(null)
   const [isSavingAvatar, setIsSavingAvatar] = useState(false)
+  const [isEditingProfile, setIsEditingProfile] = useState(false)
+  const [profileData, setProfileData] = useState({ name: '', email: '', phone: '' })
+  const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' })
+  const [showPwd, setShowPwd] = useState({ current: false, new: false, confirm: false })
+  const [pwdErrors, setPwdErrors] = useState<string[]>([])
+  const [notifications, setNotifications] = useState({
+    email: true,
+    newRequests: true,
+    approvals: true,
+    sla: true,
+  })
+  const [theme, setTheme] = useState('light')
+  const [transferForm, setTransferForm] = useState({
+    newEmail: '',
+    newName: '',
+    newPhone: '',
+    currentPassword: '',
+  })
+  const [showTransferConfirm, setShowTransferConfirm] = useState(false)
+  const [isTransferring, setIsTransferring] = useState(false)
+  const [transferError, setTransferError] = useState('')
+
+  useEffect(() => {
+    if (!user) return
+
+    const loadSettings = async () => {
+      try {
+        setLoading(true)
+        setLoadError(null)
+        const profile = await fetchProfile()
+        setAvatarSrc(typeof profile.avatar === 'string' ? profile.avatar : null)
+        setProfileData({
+          name: typeof profile.name === 'string' ? profile.name : user.name,
+          email: typeof profile.email === 'string' ? profile.email : user.email,
+          phone: typeof profile.phone === 'string' ? profile.phone : '',
+        })
+
+        if (user.role === ROLE.HR) {
+          const signature = await fetchSignature()
+          setSignatureUrl(typeof signature.signatureUrl === 'string' ? signature.signatureUrl : null)
+        }
+      } catch {
+        setLoadError('Impossible de charger les donnees')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void loadSettings()
+  }, [user])
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [theme])
+
+  if (!user) return null
+
+  const getInitials = (name: string) =>
+    name
+      .split(' ')
+      .map((segment) => segment[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Validate file size (max 200KB)
     if (file.size > 200 * 1024) {
       toast({
-        description: "L'image est trop grande. Taille maximum autorisée: 200KB",
-        className: "bg-red-500 text-white border-none",
+        description: "L'image est trop grande. Taille maximum autorisee: 200KB",
+        className: 'bg-red-500 text-white border-none',
         duration: 5000,
       })
       e.target.value = ''
       return
     }
 
-    // Validate file type
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       toast({
-        description: "Format non supporté. Utilisez JPG, PNG ou WebP",
-        className: "bg-red-500 text-white border-none",
+        description: 'Format non supporte. Utilisez JPG, PNG ou WebP',
+        className: 'bg-red-500 text-white border-none',
         duration: 5000,
       })
       e.target.value = ''
@@ -96,63 +148,29 @@ export default function SettingsPage() {
 
   const handleSaveAvatar = async () => {
     if (!pendingAvatar) return
-    
-    setIsSavingAvatar(true)
+
     try {
-      const res = await fetch('/api/employees/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ avatar: pendingAvatar })
+      setIsSavingAvatar(true)
+      const updatedUser = await updateProfile({ avatar: pendingAvatar })
+      updateCurrentUser(updatedUser)
+      setPendingAvatar(null)
+      setAvatarSrc(updatedUser.avatar ?? pendingAvatar)
+      window.dispatchEvent(new Event('avatarChange'))
+      window.dispatchEvent(
+        new CustomEvent('avatarUpdated', {
+          detail: { userId: updatedUser.id, avatar: updatedUser.avatar ?? null },
+        })
+      )
+      toast({
+        description: (
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
+            <span>Photo de profil mise a jour</span>
+          </div>
+        ),
+        className: 'bg-[#10B981] text-white border-none',
+        duration: 3000,
       })
-      
-      if (res.ok) {
-        const updatedUser = await res.json()
-        
-        // Update local storage and trigger refresh
-        const currentUserData = JSON.parse(localStorage.getItem('hr_user') || '{}')
-        const newUserData = { ...currentUserData, ...updatedUser }
-        localStorage.setItem('hr_user', JSON.stringify(newUserData))
-        localStorage.setItem('user_avatar', updatedUser.avatar || '')
-        
-        // Broadcast avatar change to all tabs and clear cache for this user
-        window.dispatchEvent(new Event('avatarChange'))
-        window.dispatchEvent(new CustomEvent('avatarUpdated', { 
-          detail: { userId: newUserData.id, avatar: updatedUser.avatar } 
-        }))
-        
-        // Clear this user's avatar from cache so other components reload fresh data
-        if (typeof window !== 'undefined') {
-          try {
-            const cache = localStorage.getItem('user_profile_pictures')
-            if (cache) {
-              const pictures = JSON.parse(cache)
-              delete pictures[newUserData.id]
-              localStorage.setItem('user_profile_pictures', JSON.stringify(pictures))
-            }
-          } catch {
-            // Ignore cache cleanup issues and keep the saved avatar.
-          }
-        }
-        setPendingAvatar(null)
-        
-        toast({
-          description: (
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
-              <span>Photo de profil mise à jour</span>
-            </div>
-          ),
-          className: "bg-[#10B981] text-white border-none",
-          duration: 3000,
-        })
-      } else {
-        await res.json().catch(() => null)
-        toast({
-          description: "Erreur lors de la sauvegarde",
-          className: "bg-red-500 text-white border-none",
-          duration: 3000,
-        })
-      }
     } catch {
       toast({
         description: 'Erreur lors de la sauvegarde',
@@ -167,19 +185,16 @@ export default function SettingsPage() {
   const handleDeletePhoto = async () => {
     const previousAvatar = avatarSrc
     setAvatarSrc(null)
-    
-      try {
-        await fetch('/api/employees/profile', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ avatar: null })
+
+    try {
+      const updatedUser = await updateProfile({ avatar: null })
+      updateCurrentUser(updatedUser)
+      window.dispatchEvent(new Event('avatarChange'))
+      window.dispatchEvent(
+        new CustomEvent('avatarUpdated', {
+          detail: { userId: updatedUser.id, avatar: null },
         })
-        const currentUserData = JSON.parse(localStorage.getItem('hr_user') || '{}')
-        localStorage.setItem('user_avatar', '')
-        window.dispatchEvent(new Event('avatarChange'))
-        window.dispatchEvent(new CustomEvent('avatarUpdated', { 
-          detail: { userId: currentUserData.id, avatar: null } 
-        }))
+      )
     } catch {
       setAvatarSrc(previousAvatar)
       toast({
@@ -190,64 +205,51 @@ export default function SettingsPage() {
     }
   }
 
-  const getInitials = (name: string) => {
-    return name.split(' ').map((n) => n[0]).join('').toUpperCase().substring(0, 2)
-  }
-
-  // ---- SECTION 2: PERSONAL INFORMATION ----
-  const [isEditingProfile, setIsEditingProfile] = useState(false)
-  const [profileData, setProfileData] = useState({
-    name: user.name,
-    email: user.email,
-    phone: '', // Not in default user, added for the form
-  })
-
-  // Load from local storage on mount
-  useEffect(() => {
-    const savedProfile = localStorage.getItem('user_profile')
-    if (savedProfile) {
-      setProfileData({ ...profileData, ...JSON.parse(savedProfile) })
+  const handleProfileSave = async () => {
+    try {
+      const updatedUser = await updateProfile(profileData)
+      updateCurrentUser(updatedUser)
+      setProfileData({
+        name: updatedUser.name || profileData.name,
+        email: updatedUser.email || profileData.email,
+        phone: typeof updatedUser.phone === 'string' ? updatedUser.phone : profileData.phone,
+      })
+      setIsEditingProfile(false)
+      toast({
+        description: (
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
+            <span>Informations mises a jour</span>
+          </div>
+        ),
+        className: 'bg-[#10B981] text-white border-none',
+        duration: 3000,
+      })
+    } catch {
+      toast({
+        description: 'Erreur lors de la sauvegarde du profil',
+        className: 'bg-red-500 text-white border-none',
+        duration: 3000,
+      })
     }
-  }, [])
-
-  const handleProfileSave = () => {
-    localStorage.setItem('user_profile', JSON.stringify(profileData))
-    setIsEditingProfile(false)
-    toast({
-      description: (
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
-          <span>Informations mises à jour</span>
-        </div>
-      ),
-      className: "bg-[#10B981] text-white border-none",
-      duration: 3000,
-    })
   }
 
   const handleProfileCancel = () => {
-    const savedProfile = localStorage.getItem('user_profile')
-    if (savedProfile) {
-      setProfileData({ ...profileData, ...JSON.parse(savedProfile) })
-    } else {
-      setProfileData({ name: user.name, email: user.email, phone: '' })
-    }
+    setProfileData({
+      name: user.name,
+      email: user.email,
+      phone: profileData.phone,
+    })
     setIsEditingProfile(false)
   }
 
-  // ---- SECTION 3: CHANGE PASSWORD ----
-  const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' })
-  const [showPwd, setShowPwd] = useState({ current: false, new: false, confirm: false })
-  const [pwdErrors, setPwdErrors] = useState<string[]>([])
-  
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setPwdErrors([])
-    
-    const errors = []
-    if (passwords.new.length < 8) errors.push("Doit contenir au moins 8 caractères")
-    if (!/\d/.test(passwords.new)) errors.push("Doit contenir au moins un chiffre")
-    if (passwords.new !== passwords.confirm) errors.push("Les mots de passe ne correspondent pas")
+    const errors: string[] = []
+
+    if (passwords.new.length < 8) errors.push('Doit contenir au moins 8 caracteres')
+    if (!/\d/.test(passwords.new)) errors.push('Doit contenir au moins un chiffre')
+    if (passwords.new !== passwords.confirm) errors.push('Les mots de passe ne correspondent pas')
 
     if (errors.length > 0) {
       setPwdErrors(errors)
@@ -255,97 +257,38 @@ export default function SettingsPage() {
     }
 
     try {
-      const res = await fetch('/api/auth/password', { 
-        method: 'PATCH', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(passwords) 
+      setPwdErrors([])
+      await updatePassword(passwords)
+      toast({
+        description: (
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
+            <span>Mot de passe modifie avec succes</span>
+          </div>
+        ),
+        className: 'bg-[#10B981] text-white border-none',
+        duration: 3000,
       })
-      
-      if (res.ok) {
-        toast({
-          description: (
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
-              <span>Mot de passe modifié avec succès</span>
-            </div>
-          ),
-          className: "bg-[#10B981] text-white border-none",
-          duration: 3000,
-        })
-        setPasswords({ current: '', new: '', confirm: '' })
-      } else {
-        const data = await res.json()
-        setPwdErrors([data.error || "Une erreur est survenue."])
-      }
-    } catch (err) {
-      setPwdErrors(["Erreur réseau."])
+      setPasswords({ current: '', new: '', confirm: '' })
+    } catch (error) {
+      setPwdErrors([error instanceof Error ? error.message : 'Erreur reseau.'])
     }
   }
 
-  // ---- SECTION 4: NOTIFICATIONS ----
-  const [notifications, setNotifications] = useState({
-    email: true,
-    newRequests: true,
-    approvals: true,
-    sla: true
-  })
-
-  useEffect(() => {
-    const saved = localStorage.getItem('user_notifications')
-    if (saved) setNotifications(JSON.parse(saved))
-  }, [])
-
   const handleToggleNotification = (key: keyof typeof notifications) => {
-    const next = { ...notifications, [key]: !notifications[key] }
-    setNotifications(next)
-    localStorage.setItem('user_notifications', JSON.stringify(next))
+    setNotifications((current) => ({ ...current, [key]: !current[key] }))
     toast({
-      description: "Préférences sauvegardées",
-      className: "bg-[#10B981] text-white border-none",
+      description: 'Preferences sauvegardees',
+      className: 'bg-[#10B981] text-white border-none',
       duration: 2000,
     })
   }
-
-  // ---- SECTION 5: APPEARANCE ----
-  const [theme, setTheme] = useState('light')
-  useEffect(() => {
-    const saved = localStorage.getItem('user_theme')
-    if (saved) setTheme(saved)
-  }, [])
-
-  const handleThemeChange = (newTheme: string) => {
-    setTheme(newTheme)
-    localStorage.setItem('user_theme', newTheme)
-    if (newTheme === 'dark') {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
-    }
-  }
-
-  const [transferForm, setTransferForm] = useState({
-    newEmail: '',
-    currentPassword: '',
-  })
-  const [showTransferConfirm, setShowTransferConfirm] = useState(false)
-  const [isTransferring, setIsTransferring] = useState(false)
-  const [transferError, setTransferError] = useState('')
 
   const handleTransferAccess = async () => {
     try {
       setIsTransferring(true)
       setTransferError('')
-      const res = await fetch('/api/rh/transfer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(transferForm),
-      })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => null)
-        throw new Error(data?.error || 'Echec du transfert RH')
-      }
-
+      await transferRhAccess(transferForm)
       router.push('/login')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Echec du transfert RH'
@@ -361,50 +304,48 @@ export default function SettingsPage() {
     }
   }
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-10">
+      {loadError && (
+        <div className="text-destructive text-sm p-4 rounded border border-destructive/20">
+          {loadError}
+        </div>
+      )}
       <div>
-        <h1 className="text-3xl font-bold" style={{ color: 'var(--color-text)' }}>Paramètres</h1>
+        <h1 className="text-3xl font-bold" style={{ color: 'var(--color-text)' }}>Parametres</h1>
         <p className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
-          Gérez votre compte et vos préférences
+          Gerez votre compte et vos preferences
         </p>
       </div>
 
       <Tabs defaultValue="profile" className="flex flex-col md:flex-row gap-6">
         <TabsList className="flex md:flex-col h-auto bg-transparent items-start justify-start space-x-2 md:space-x-0 md:space-y-2 w-full md:w-64 overflow-x-auto pb-2 md:pb-0">
-          <TabsTrigger 
-            value="profile" 
-            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
-          >
+          <TabsTrigger value="profile" className="w-full justify-start rounded-none py-3">
             <User className="h-4 w-4 mr-2" />
             Profil
           </TabsTrigger>
-          <TabsTrigger 
-            value="security" 
-            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
-          >
+          <TabsTrigger value="security" className="w-full justify-start rounded-none py-3">
             <Lock className="h-4 w-4 mr-2" />
-            Sécurité
+            Securite
           </TabsTrigger>
-          <TabsTrigger 
-            value="notifications" 
-            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
-          >
+          <TabsTrigger value="notifications" className="w-full justify-start rounded-none py-3">
             <Bell className="h-4 w-4 mr-2" />
             Notifications
           </TabsTrigger>
-          <TabsTrigger 
-            value="appearance" 
-            className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
-          >
+          <TabsTrigger value="appearance" className="w-full justify-start rounded-none py-3">
             <Palette className="h-4 w-4 mr-2" />
             Apparence
           </TabsTrigger>
           {user.role === ROLE.HR && (
-            <TabsTrigger 
-              value="sla" 
-              className="w-full justify-start data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:border-l-4 data-[state=active]:border-[#1B3A6B] data-[state=active]:shadow-sm rounded-none py-3"
-            >
+            <TabsTrigger value="sla" className="w-full justify-start rounded-none py-3">
               <Clock className="h-4 w-4 mr-2" />
               SLA
             </TabsTrigger>
@@ -412,12 +353,11 @@ export default function SettingsPage() {
         </TabsList>
 
         <div className="flex-1 space-y-6">
-          <TabsContent value="profile" className="space-y-6 m-0 opacity-100 animate-in fade-in duration-300">
-            {/* Avatar Section */}
+          <TabsContent value="profile" className="space-y-6 m-0">
             <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Photo de profil</h2>
               <div className="flex items-center gap-6">
-                <div 
+                <div
                   className="h-[100px] w-[100px] rounded-full overflow-hidden flex items-center justify-center border text-3xl font-bold"
                   style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', borderColor: 'var(--color-border)' }}
                 >
@@ -428,54 +368,29 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <div className="space-y-3">
-                  <input 
-                    type="file" 
-                    accept="image/png, image/jpeg, image/webp" 
-                    className="hidden" 
-                    ref={fileInputRef} 
-                    onChange={handleFileChange} 
-                  />
-                  <Button 
-                    variant="outline" 
-                    onClick={() => fileInputRef.current?.click()}
-                    style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
-                  >
+                  <input type="file" accept="image/png, image/jpeg, image/webp" className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+                  <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
                     Changer la photo
                   </Button>
                   {pendingAvatar && (
-                    <Button 
-                      onClick={handleSaveAvatar}
-                      disabled={isSavingAvatar}
-                      style={{ backgroundColor: 'var(--color-brand-navy)', color: 'white' }}
-                    >
+                    <Button onClick={handleSaveAvatar} disabled={isSavingAvatar}>
                       {isSavingAvatar ? 'Sauvegarde...' : 'Sauvegarder'}
                     </Button>
                   )}
                   {avatarSrc && (
-                    <div 
-                      className="text-sm cursor-pointer hover:underline" 
-                      style={{ color: 'var(--color-danger)' }}
-                      onClick={handleDeletePhoto}
-                    >
+                    <button type="button" className="text-sm text-red-600 hover:underline" onClick={handleDeletePhoto}>
                       Supprimer la photo
-                    </div>
+                    </button>
                   )}
                 </div>
               </div>
             </Card>
 
-             {/* Personal Info Section */}
-             <Card className="p-3 md:p-4 lg:p-5">
+            <Card className="p-3 md:p-4 lg:p-5">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>Informations personnelles</h2>
                 {!isEditingProfile ? (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => setIsEditingProfile(true)}
-                    style={{ color: '#F5A623' }}
-                    className="hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => setIsEditingProfile(true)}>
                     <Edit2 className="h-4 w-4 mr-2" />
                     Modifier
                   </Button>
@@ -485,11 +400,7 @@ export default function SettingsPage() {
                       <X className="h-4 w-4 mr-2" />
                       Annuler
                     </Button>
-                    <Button 
-                      size="sm" 
-                      onClick={handleProfileSave}
-                      style={{ backgroundColor: 'var(--color-brand-navy)', color: 'white' }}
-                    >
+                    <Button size="sm" onClick={handleProfileSave}>
                       <Save className="h-4 w-4 mr-2" />
                       Sauvegarder
                     </Button>
@@ -498,278 +409,149 @@ export default function SettingsPage() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label style={{ color: 'var(--color-text-muted)' }}>Nom complet</Label>
-                  {isEditingProfile ? (
-                    <Input 
-                      value={profileData.name} 
-                      onChange={(e) => setProfileData({...profileData, name: e.target.value})} 
-                      style={{ borderColor: 'var(--color-border)' }}
-                    />
-                  ) : (
-                    <p className="py-2" style={{ color: 'var(--color-text)' }}>{profileData.name}</p>
-                  )}
-                </div>
-                
-                <div className="space-y-2">
-                  <Label style={{ color: 'var(--color-text-muted)' }}>Adresse email</Label>
-                  {isEditingProfile ? (
-                    <Input 
-                      type="email"
-                      value={profileData.email} 
-                      onChange={(e) => setProfileData({...profileData, email: e.target.value})} 
-                      style={{ borderColor: 'var(--color-border)' }}
-                    />
-                  ) : (
-                    <p className="py-2" style={{ color: 'var(--color-text)' }}>{profileData.email}</p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label style={{ color: 'var(--color-text-muted)' }}>Numéro de téléphone</Label>
-                  {isEditingProfile ? (
-                    <Input 
-                      type="tel"
-                      value={profileData.phone} 
-                      onChange={(e) => setProfileData({...profileData, phone: e.target.value})} 
-                      style={{ borderColor: 'var(--color-border)' }}
-                      placeholder="+216 12 345 678"
-                    />
-                  ) : (
-                    <p className="py-2" style={{ color: 'var(--color-text)' }}>{profileData.phone || "—"}</p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label style={{ color: 'var(--color-text-muted)' }}>Département</Label>
-                  <Input 
-                    value={user.department || "—"} 
-                    disabled 
-                    style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', borderColor: 'transparent' }} 
+                <Field label="Nom complet" editing={isEditingProfile}>
+                  <InputOrText
+                    editing={isEditingProfile}
+                    value={profileData.name}
+                    onChange={(value) => setProfileData((current) => ({ ...current, name: value }))}
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <Label style={{ color: 'var(--color-text-muted)' }}>Poste</Label>
-                  <Input 
-                    value={user.role} 
-                    disabled 
-                    style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', borderColor: 'transparent' }} 
+                </Field>
+                <Field label="Adresse email" editing={isEditingProfile}>
+                  <InputOrText
+                    editing={isEditingProfile}
+                    type="email"
+                    value={profileData.email}
+                    onChange={(value) => setProfileData((current) => ({ ...current, email: value }))}
                   />
-                </div>
+                </Field>
+                <Field label="Numero de telephone" editing={isEditingProfile}>
+                  <InputOrText
+                    editing={isEditingProfile}
+                    type="tel"
+                    value={profileData.phone}
+                    placeholder="+216 12 345 678"
+                    emptyValue="-"
+                    onChange={(value) => setProfileData((current) => ({ ...current, phone: value }))}
+                  />
+                </Field>
+                <Field label="Departement" editing={false}>
+                  <p className="py-2" style={{ color: 'var(--color-text)' }}>{user.department || '-'}</p>
+                </Field>
+                <Field label="Poste" editing={false}>
+                  <p className="py-2" style={{ color: 'var(--color-text)' }}>{user.role}</p>
+                </Field>
               </div>
             </Card>
 
             {user.role === ROLE.HR && (
-              <Card className="p-3 md:p-4 lg:p-5">
-                <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--color-text)' }}>Signature</h2>
-                <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  Cette signature sera utilisee dans les documents RH generes par la plateforme.
-                </p>
-                <SignatureUploader
-                  currentSignatureUrl={signatureUrl}
-                  onSignatureSaved={(url) => setSignatureUrl(url)}
-                />
-              </Card>
-            )}
+              <>
+                <Card className="p-3 md:p-4 lg:p-5">
+                  <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--color-text)' }}>Signature</h2>
+                  <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                    Cette signature sera utilisee dans les documents RH generes par la plateforme.
+                  </p>
+                  <SignatureUploader currentSignatureUrl={signatureUrl} onSignatureSaved={setSignatureUrl} />
+                  {signatureUrl && (
+                    <Button type="button" variant="outline" className="mt-4" onClick={async () => {
+                      try {
+                        await deleteRhSignature()
+                        setSignatureUrl(null)
+                      } catch {
+                        toast({
+                          description: 'Impossible de supprimer la signature',
+                          className: 'bg-red-500 text-white border-none',
+                          duration: 3000,
+                        })
+                      }
+                    }}>
+                      Supprimer la signature
+                    </Button>
+                  )}
+                </Card>
 
-            {user.role === ROLE.HR && (
-              <Card
-                className="p-3 md:p-4 lg:p-5 border-amber-300 dark:border-amber-900/60"
-                style={{ borderColor: '#F59E0B', backgroundColor: 'color-mix(in srgb, var(--color-bg) 72%, #F59E0B 28%)' }}
-              >
-                <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--color-text)' }}>Transfer RH Account</h2>
-                <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  This will transfer RH access to a new account. Your personal data will be cleared. This cannot be undone.
-                </p>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="new-owner-email">New owner email</Label>
-                    <Input
-                      id="new-owner-email"
-                      type="email"
-                      value={transferForm.newEmail}
-                      onChange={(e) => setTransferForm({ ...transferForm, newEmail: e.target.value })}
-                      placeholder="nouveau.rh@company.com"
-                    />
+                <Card className="p-3 md:p-4 lg:p-5 border-amber-300 dark:border-amber-900/60">
+                  <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--color-text)' }}>Transfer RH Account</h2>
+                  <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                    This will transfer RH access to a new account. Your personal data will be cleared. This cannot be undone.
+                  </p>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <FieldInput id="new-owner-email" label="New owner email" type="email" value={transferForm.newEmail} onChange={(value) => setTransferForm((current) => ({ ...current, newEmail: value }))} placeholder="nouveau.rh@company.com" />
+                    <FieldInput id="new-owner-name" label="New owner name" value={transferForm.newName} onChange={(value) => setTransferForm((current) => ({ ...current, newName: value }))} placeholder="Nom complet RH" />
+                    <FieldInput id="new-owner-phone" label="New owner phone" type="tel" value={transferForm.newPhone} onChange={(value) => setTransferForm((current) => ({ ...current, newPhone: value }))} placeholder="+216 XX XXX XXX" />
+                    <FieldInput id="current-password-confirm" label="Your current password" type="password" value={transferForm.currentPassword} onChange={(value) => setTransferForm((current) => ({ ...current, currentPassword: value }))} />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="current-password-confirm">Your current password</Label>
-                    <Input
-                      id="current-password-confirm"
-                      type="password"
-                      value={transferForm.currentPassword}
-                      onChange={(e) => setTransferForm({ ...transferForm, currentPassword: e.target.value })}
-                    />
+                  {transferError && (
+                    <div className="mt-4 rounded-lg p-3 text-sm text-red-600 border border-red-200">
+                      {transferError}
+                    </div>
+                  )}
+                  <div className="mt-5">
+                    <Button
+                      type="button"
+                      disabled={!transferForm.newEmail || !transferForm.newName || !transferForm.newPhone || !transferForm.currentPassword || isTransferring}
+                      onClick={() => setShowTransferConfirm(true)}
+                    >
+                      Transfer Access
+                    </Button>
                   </div>
-                </div>
-
-                {transferError && (
-                  <div
-                    className="mt-4 rounded-lg p-3 text-sm"
-                    style={{ backgroundColor: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
-                  >
-                    {transferError}
-                  </div>
-                )}
-
-                <div className="mt-5">
-                  <Button
-                    type="button"
-                    disabled={!transferForm.newEmail || !transferForm.currentPassword || isTransferring}
-                    style={{ backgroundColor: '#B45309', color: 'white' }}
-                    onClick={() => setShowTransferConfirm(true)}
-                  >
-                    Transfer Access
-                  </Button>
-                </div>
-              </Card>
+                </Card>
+              </>
             )}
           </TabsContent>
 
-          <TabsContent value="security" className="m-0 opacity-100 animate-in fade-in duration-300">
+          <TabsContent value="security" className="m-0">
             <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Changer le mot de passe</h2>
               <form onSubmit={handlePasswordSubmit} className="space-y-4 max-w-md">
-                
-                <div className="space-y-2">
-                  <Label htmlFor="current">Mot de passe actuel</Label>
-                  <div className="relative">
-                    <Input 
-                      id="current"
-                      type={showPwd.current ? "text" : "password"} 
-                      value={passwords.current}
-                      onChange={(e) => setPasswords({...passwords, current: e.target.value})}
-                      required
-                      style={{ borderColor: 'var(--color-border)', paddingRight: '40px' }}
-                    />
-                    <button type="button" className="absolute right-3 top-2.5 text-[#64748B]" onClick={() => setShowPwd({...showPwd, current: !showPwd.current})}>
-                      {showPwd.current ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
+                <PasswordField id="current" label="Mot de passe actuel" visible={showPwd.current} value={passwords.current} onToggle={() => setShowPwd((current) => ({ ...current, current: !current.current }))} onChange={(value) => setPasswords((current) => ({ ...current, current: value }))} />
                 <div className="space-y-2 border-t pt-4 mt-6" style={{ borderColor: 'var(--color-border)' }}>
-                  <Label htmlFor="new">Nouveau mot de passe</Label>
-                  <div className="relative">
-                    <Input 
-                      id="new"
-                      type={showPwd.new ? "text" : "password"} 
-                      value={passwords.new}
-                      onChange={(e) => setPasswords({...passwords, new: e.target.value})}
-                      required
-                      style={{ borderColor: pwdErrors.length ? 'var(--color-danger)' : 'var(--color-border)', paddingRight: '40px' }}
-                    />
-                    <button type="button" className="absolute right-3 top-2.5 text-[#64748B]" onClick={() => setShowPwd({...showPwd, new: !showPwd.new})}>
-                      {showPwd.new ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  {pwdErrors.map((err, i) => (
-                    <p key={i} className="text-xs" style={{ color: 'var(--color-danger)' }}>• {err}</p>
+                  <PasswordField id="new" label="Nouveau mot de passe" visible={showPwd.new} value={passwords.new} onToggle={() => setShowPwd((current) => ({ ...current, new: !current.new }))} onChange={(value) => setPasswords((current) => ({ ...current, new: value }))} />
+                  {pwdErrors.map((error) => (
+                    <p key={error} className="text-xs" style={{ color: 'var(--color-danger)' }}>- {error}</p>
                   ))}
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="confirm">Confirmer le nouveau mot de passe</Label>
-                  <div className="relative">
-                    <Input 
-                      id="confirm"
-                      type={showPwd.confirm ? "text" : "password"} 
-                      value={passwords.confirm}
-                      onChange={(e) => setPasswords({...passwords, confirm: e.target.value})}
-                      required
-                      style={{ borderColor: 'var(--color-border)', paddingRight: '40px' }}
-                    />
-                    <button type="button" className="absolute right-3 top-2.5 text-[#64748B]" onClick={() => setShowPwd({...showPwd, confirm: !showPwd.confirm})}>
-                      {showPwd.confirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <Button type="submit" className="mt-6" style={{ backgroundColor: 'var(--color-brand-navy)', color: 'white' }}>
-                  Mettre à jour
-                </Button>
+                <PasswordField id="confirm" label="Confirmer le nouveau mot de passe" visible={showPwd.confirm} value={passwords.confirm} onToggle={() => setShowPwd((current) => ({ ...current, confirm: !current.confirm }))} onChange={(value) => setPasswords((current) => ({ ...current, confirm: value }))} />
+                <Button type="submit" className="mt-6">Mettre a jour</Button>
               </form>
             </Card>
           </TabsContent>
 
-           <TabsContent value="notifications" className="m-0 opacity-100 animate-in fade-in duration-300">
-             <Card className="p-3 md:p-4 lg:p-5">
-              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Préférences de notification</h2>
-              
+          <TabsContent value="notifications" className="m-0">
+            <Card className="p-3 md:p-4 lg:p-5">
+              <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Preferences de notification</h2>
               <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium" style={{ color: 'var(--color-text)' }}>Recevoir les notifications par email</h3>
-                    <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Alertes système et emails importants</p>
-                  </div>
-                  <Switch checked={notifications.email} onCheckedChange={() => handleToggleNotification('email')} />
-                </div>
-                
-                <div className="h-px" style={{ backgroundColor: 'var(--color-border)' }} />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium" style={{ color: 'var(--color-text)' }}>Nouvelles demandes</h3>
-                    <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Être averti lorsqu'une demande est créée</p>
-                  </div>
-                  <Switch checked={notifications.newRequests} onCheckedChange={() => handleToggleNotification('newRequests')} />
-                </div>
-
-                <div className="h-px" style={{ backgroundColor: 'var(--color-border)' }} />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium" style={{ color: 'var(--color-text)' }}>Approbations & Refus</h3>
-                    <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Recevoir une alerte quand le statut change</p>
-                  </div>
-                  <Switch checked={notifications.approvals} onCheckedChange={() => handleToggleNotification('approvals')} />
-                </div>
-
-                <div className="h-px" style={{ backgroundColor: 'var(--color-border)' }} />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-medium" style={{ color: 'var(--color-text)' }}>Rappels SLA</h3>
-                    <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Avertissements avant expiration des délais</p>
-                  </div>
-                  <Switch checked={notifications.sla} onCheckedChange={() => handleToggleNotification('sla')} />
-                </div>
+                <NotificationRow title="Recevoir les notifications par email" description="Alertes systeme et emails importants" checked={notifications.email} onCheckedChange={() => handleToggleNotification('email')} />
+                <NotificationRow title="Nouvelles demandes" description="Etre averti lorsqu'une demande est creee" checked={notifications.newRequests} onCheckedChange={() => handleToggleNotification('newRequests')} />
+                <NotificationRow title="Approbations et refus" description="Recevoir une alerte quand le statut change" checked={notifications.approvals} onCheckedChange={() => handleToggleNotification('approvals')} />
+                <NotificationRow title="Rappels SLA" description="Avertissements avant expiration des delais" checked={notifications.sla} onCheckedChange={() => handleToggleNotification('sla')} />
               </div>
             </Card>
           </TabsContent>
 
-           <TabsContent value="appearance" className="m-0 opacity-100 animate-in fade-in duration-300">
-             <Card className="p-3 md:p-4 lg:p-5">
+          <TabsContent value="appearance" className="m-0">
+            <Card className="p-3 md:p-4 lg:p-5">
               <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Apparence</h2>
-              
               <div className="grid grid-cols-2 max-w-sm gap-4">
-                <div 
-                  className={`flex cursor-pointer flex-col items-center gap-3 rounded-lg border-2 p-4 transition-all ${theme === 'light' ? 'border-[#1B3A6B] bg-slate-50 dark:bg-slate-800' : 'border-[#E2E8F0] hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-500'}`}
-                  onClick={() => handleThemeChange('light')}
-                >
-                  <div className="h-16 w-full rounded-md bg-[#F4F6FA] border border-[#E2E8F0]"></div>
-                  <span className="font-medium" style={{ color: 'var(--color-text)' }}>Clair</span>
-                </div>
-                <div 
-                  className={`flex cursor-pointer flex-col items-center gap-3 rounded-lg border-2 p-4 transition-all ${theme === 'dark' ? 'border-[#1B3A6B] bg-slate-50 dark:bg-slate-800' : 'border-[#E2E8F0] hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-500'}`}
-                  onClick={() => handleThemeChange('dark')}
-                >
-                  <div className="h-16 w-full rounded-md bg-[#0F172A] border border-[#334155]"></div>
-                  <span className="font-medium" style={{ color: 'var(--color-text)' }}>Sombre</span>
-                </div>
+                <button type="button" className={`rounded-lg border-2 p-4 ${theme === 'light' ? 'border-[#1B3A6B]' : 'border-[#E2E8F0]'}`} onClick={() => setTheme('light')}>
+                  <div className="h-16 w-full rounded-md bg-[#F4F6FA] border border-[#E2E8F0]" />
+                  <span className="mt-3 block font-medium">Clair</span>
+                </button>
+                <button type="button" className={`rounded-lg border-2 p-4 ${theme === 'dark' ? 'border-[#1B3A6B]' : 'border-[#E2E8F0]'}`} onClick={() => setTheme('dark')}>
+                  <div className="h-16 w-full rounded-md bg-[#0F172A] border border-[#334155]" />
+                  <span className="mt-3 block font-medium">Sombre</span>
+                </button>
               </div>
             </Card>
           </TabsContent>
 
           {user.role === ROLE.HR && (
-            <TabsContent value="sla" className="m-0 opacity-100 animate-in fade-in duration-300">
+            <TabsContent value="sla" className="m-0">
               <SlaSettingsTab />
             </TabsContent>
           )}
         </div>
       </Tabs>
+
       <ConfirmDialog
         open={showTransferConfirm}
         title="Transfer RH account"
@@ -784,65 +566,202 @@ export default function SettingsPage() {
 }
 
 function SlaSettingsTab() {
-  const [configs, setConfigs] = useState<{ id: string; requestType: string; maxHours: number; description?: string | null }[]>([])
+  const [configs, setConfigs] = useState<SlaConfig[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/sla-config').then((res) => res.json()).then((data) => { setConfigs(data); setLoading(false) })
+    const loadConfigs = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await fetchSlaConfig()
+        setConfigs(Array.isArray(data) ? data : [])
+      } catch {
+        setError('Impossible de charger les donnees')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void loadConfigs()
   }, [])
 
   const handleUpdate = async (id: string, maxHours: number) => {
-    await fetch(`/api/sla-config/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ maxHours }),
-    })
-    setConfigs(configs.map((c) => (c.id === id ? { ...c, maxHours } : c)))
+    try {
+      await updateSlaConfig(id, { maxHours })
+      setConfigs((current) => current.map((config) => (config.id === id ? { ...config, maxHours } : config)))
+    } catch {
+      setError('Impossible de charger les donnees')
+    }
   }
 
   const labels: Record<string, string> = {
-    [REQUEST_TYPE.LEAVE]: 'Congé',
+    [REQUEST_TYPE.LEAVE]: 'Conge',
     [REQUEST_TYPE.AUTHORIZATION]: 'Autorisation',
-    [REQUEST_TYPE.LOAN]: 'Prêt',
+    [REQUEST_TYPE.LOAN]: 'Pret',
     [REQUEST_TYPE.DOCUMENT]: 'Document',
   }
 
-  if (loading) return <div className="p-6 text-center">Chargement...</div>
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <Card className="p-3 md:p-4 lg:p-5">
+      {error && (
+        <div className="text-destructive text-sm p-4 rounded border border-destructive/20 mb-4">
+          {error}
+        </div>
+      )}
       <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text)' }}>Configuration SLA</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left py-3 font-medium" style={{ color: 'var(--color-text)' }}>Type</th>
-              <th className="text-left py-3 font-medium" style={{ color: 'var(--color-text)' }}>Délai (heures)</th>
-              <th className="text-left py-3 font-medium" style={{ color: 'var(--color-text)' }}>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {configs.map((config) => (
-              <tr key={config.id} className="border-b">
-                <td className="py-3" style={{ color: 'var(--color-text)' }}>{labels[config.requestType] || config.requestType}</td>
-                <td className="py-3">
-                  <Input
-                    type="number"
-                    value={config.maxHours}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value)
-                      if (val > 0) handleUpdate(config.id, val)
-                    }}
-                    className="w-24"
-                  />
-                </td>
-                <td className="py-3 text-muted-foreground">{config.description || '—'}</td>
+      {configs.length === 0 ? (
+        <p className="text-center py-4 text-muted-foreground">Aucune configuration SLA</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="text-left py-3 font-medium">Type</th>
+                <th className="text-left py-3 font-medium">Delai (heures)</th>
+                <th className="text-left py-3 font-medium">Description</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {configs.map((config) => (
+                <tr key={config.id} className="border-b">
+                  <td className="py-3">{labels[config.requestType] || config.requestType}</td>
+                  <td className="py-3">
+                    <Input
+                      type="number"
+                      value={config.maxHours}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10)
+                        if (value > 0) {
+                          void handleUpdate(config.id, value)
+                        }
+                      }}
+                      className="w-24"
+                    />
+                  </td>
+                  <td className="py-3 text-muted-foreground">{config.description || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   )
 }
 
+function Field({ label, children }: { label: string; editing: boolean; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      {children}
+    </div>
+  )
+}
+
+function InputOrText({
+  editing,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  emptyValue,
+}: {
+  editing: boolean
+  value: string
+  onChange: (value: string) => void
+  type?: string
+  placeholder?: string
+  emptyValue?: string
+}) {
+  if (editing) {
+    return <Input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+  }
+
+  return <p className="py-2">{value || emptyValue || ''}</p>
+}
+
+function FieldInput({
+  id,
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+}: {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  type?: string
+  placeholder?: string
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+    </div>
+  )
+}
+
+function PasswordField({
+  id,
+  label,
+  value,
+  visible,
+  onChange,
+  onToggle,
+}: {
+  id: string
+  label: string
+  value: string
+  visible: boolean
+  onChange: (value: string) => void
+  onToggle: () => void
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="relative">
+        <Input id={id} type={visible ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} required style={{ paddingRight: '40px' }} />
+        <button type="button" aria-label="Afficher le mot de passe" className="absolute right-3 top-2.5 text-[#64748B]" onClick={onToggle}>
+          {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function NotificationRow({
+  title,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  title: string
+  description: string
+  checked: boolean
+  onCheckedChange: () => void
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-medium">{title}</h3>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+        <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      </div>
+      <div className="h-px bg-border last:hidden" />
+    </>
+  )
+}

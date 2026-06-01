@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ROLE, type Role } from '@/lib/constants'
+import { ROLE } from '@/lib/constants'
+import { baseNavigationItems, roleNavigationItems, settingsNavigationItem } from '@/lib/constants/nav'
+import { useUnreadCount } from '@/lib/hooks/useUnreadCount'
+import { clearNotifications, fetchNotifications, markNotificationAsRead } from '@/lib/services/client/notifications.service'
 import { useNotificationRefresh } from '@/lib'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { LogOut, Settings, Bell, Menu, BarChart3, FileText, Users, CheckCircle2, Send, FolderKanban, MessageSquare, ClipboardList, Sparkles, AlertCircle } from 'lucide-react'
+import { LogOut, Bell, Menu, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -33,20 +36,24 @@ interface Notification {
   createdAt: string;
 }
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon: React.ReactNode;
-  badge?: number;
+function unwrapNotificationsResponse(
+  response: Notification[] | { data?: Notification[] }
+): Notification[] {
+  if (Array.isArray(response)) {
+    return response
+  }
+
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export function Navigation() {
-  const { user, logout } = useCurrentUser()
+  const { user, logout, socket } = useCurrentUser()
   const router = useRouter()
   const pathname = usePathname()
   const { refreshKey } = useNotificationRefresh()
   const [avatar, setAvatar] = useState<string | null>(null)
   const [notifications, setNotifications] = useState<Notification[]>([])
+  const unreadCount = useUnreadCount(Boolean(user))
 
   const getProfilePicture = (userId: string): string | null => {
     if (typeof window === 'undefined') return null
@@ -57,7 +64,7 @@ export function Navigation() {
         return pictures[userId] || null
       }
     } catch (error) {
-      console.error('Error loading profile picture:', error)
+      console.error('[Navigation]', error)
     }
     return null
   }
@@ -84,56 +91,67 @@ export function Navigation() {
    useEffect(() => {
      if (!user) return
 
-     const fetchNotifications = async () => {
+     const loadNotifications = async () => {
        try {
-         const res = await fetch('/api/notifications')
-         if (res.ok) {
-           const data = await res.json()
-           setNotifications(Array.isArray(data) ? data : [])
-         } else {
-           setNotifications([])
-         }
+         const data = await fetchNotifications({ limit: 30 })
+         setNotifications(
+           unwrapNotificationsResponse(data as Notification[] | { data?: Notification[] })
+         )
        } catch (err) {
-         console.error("Failed to fetch notifications", err)
+         console.error('[Navigation]', err)
          setNotifications([])
        }
      }
 
-     fetchNotifications()
+     loadNotifications()
      // Poll every 30 seconds
-     const interval = setInterval(fetchNotifications, 30000)
+     const interval = setInterval(loadNotifications, 30000)
+
+     const handleSocketNotification = (notification: Notification) => {
+       setNotifications((current) => {
+         const alreadyExists = current.some((item) => item.id === notification.id)
+         if (alreadyExists) {
+           return current.map((item) => (item.id === notification.id ? notification : item))
+         }
+
+         return [notification, ...current]
+       })
+     }
 
      // Listen for custom event to refresh notifications
      const handleRefresh = () => {
-       fetchNotifications()
+       void loadNotifications()
      }
      window.addEventListener('refreshNotifications', handleRefresh)
+     socket?.on('new_notification', handleSocketNotification)
 
      return () => {
        clearInterval(interval)
        window.removeEventListener('refreshNotifications', handleRefresh)
+       socket?.off('new_notification', handleSocketNotification)
      }
-   }, [user, refreshKey])
+   }, [user, refreshKey, socket])
 
   const handleReadNotification = async (id: string) => {
     // Optimistic update
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
     
     try {
-      await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' })
+      await markNotificationAsRead(id)
       window.dispatchEvent(new Event('refreshNotifications'))
-    } catch(err) {
+    } catch (error) {
+      console.error('[Navigation]', error)
       // Revert if failed
     }
   }
 
   const handleClearAllNotifications = async () => {
     try {
-      await fetch('/api/notifications', { method: 'DELETE' })
+      await clearNotifications()
       setNotifications([])
       window.dispatchEvent(new Event('refreshNotifications'))
-    } catch(err) {
-      console.error("Failed to clear notifications")
+    } catch (error) {
+      console.error('[Navigation]', error)
     }
   }
 
@@ -148,108 +166,15 @@ export function Navigation() {
     .join('')
     .substring(0, 2)
 
-  const unreadCount = notifications.filter(n => !n.read).length
+  const notificationUnreadCount = notifications.filter(n => !n.read).length
 
-  // Build navigation items based on user role
-  const navItems: NavItem[] = [
-    {
-      label: 'Tableau de bord',
-      href: '/dashboard',
-      icon: <BarChart3 className="h-4 w-4" />,
-    },
-    {
-      label: 'Messages',
-      href: '/dashboard/chat',
-      icon: <MessageSquare className="h-4 w-4" />,
-      badge: unreadCount > 0 ? unreadCount : undefined,
-    },
-  ]
-
-  if (user.role === ROLE.HR) {
-    navItems.push(
-      {
-        label: 'Historique des demandes',
-        href: '/dashboard/requests',
-        icon: <FileText className="h-4 w-4" />,
-      },
-      {
-        label: 'Approbations en attente',
-        href: '/dashboard/approvals',
-        icon: <CheckCircle2 className="h-4 w-4" />,
-      },
-      {
-        label: 'Utilisateurs',
-        href: '/dashboard/users',
-        icon: <Users className="h-4 w-4" />,
-      },
-      {
-        label: 'Competences',
-        href: '/dashboard/skills',
-        icon: <Sparkles className="h-4 w-4" />,
-      },
-      {
-        label: 'Projets',
-        href: '/dashboard/projects',
-        icon: <FolderKanban className="h-4 w-4" />,
-      },
-      {
-        label: 'Journal d\'audit',
-        href: '/dashboard/audit',
-        icon: <ClipboardList className="h-4 w-4" />,
-      },
-    )
-  } else if (user.role === ROLE.MANAGER) {
-    navItems.push(
-      {
-        label: 'Mon Equipe',
-        href: '/dashboard/equipe',
-        icon: <Users className="h-4 w-4" />,
-      },
-      {
-        label: 'Demandes de l\'equipe',
-        href: '/dashboard/team-requests',
-        icon: <FileText className="h-4 w-4" />,
-      },
-      {
-        label: 'Mes approbations',
-        href: '/dashboard/my-approvals',
-        icon: <CheckCircle2 className="h-4 w-4" />,
-      },
-      {
-        label: 'Projets',
-        href: '/dashboard/projects',
-        icon: <FolderKanban className="h-4 w-4" />,
-      },
-      {
-        label: 'Competences',
-        href: '/dashboard/skills',
-        icon: <Sparkles className="h-4 w-4" />,
-      }
-    )
-  } else {
-    navItems.push(
-      {
-        label: 'Mes demandes',
-        href: '/dashboard/my-requests',
-        icon: <FileText className="h-4 w-4" />,
-      },
-      {
-        label: 'Nouvelle demande',
-        href: '/dashboard/new-request',
-        icon: <Send className="h-4 w-4" />,
-      },
-      {
-        label: 'Projets',
-        href: '/dashboard/projects',
-        icon: <FolderKanban className="h-4 w-4" />,
-      },
-      {
-        label: 'Competences',
-        href: '/dashboard/skills',
-        icon: <Sparkles className="h-4 w-4" />,
-      }
-    )
-  }
+  const navItems = [
+    ...baseNavigationItems,
+    ...roleNavigationItems[user.role],
+  ].map((item) => ({
+    ...item,
+    badge: item.href === '/dashboard/chat' && unreadCount > 0 ? unreadCount : undefined,
+  }))
 
   return (
     <nav className="border-b" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
@@ -274,11 +199,11 @@ export function Navigation() {
         <div className="flex items-center gap-4">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="relative rounded-full">
+              <Button variant="ghost" size="icon" className="relative rounded-full" aria-label="Voir les notifications">
                 <Bell className="h-5 w-5" style={{ color: 'var(--color-text-muted)' }} />
-                {unreadCount > 0 && (
+                {notificationUnreadCount > 0 && (
                   <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold" style={{ backgroundColor: 'var(--color-danger)', color: 'white' }}>
-                    {unreadCount > 9 ? '99+' : unreadCount}
+                    {notificationUnreadCount > 9 ? '9+' : notificationUnreadCount}
                   </span>
                 )}
               </Button>
@@ -296,8 +221,8 @@ export function Navigation() {
                   </button>
                 )}
               </div>
-              {notifications.length > 0 && unreadCount > 0 && (
-                <div className="px-4 py-1 text-xs" style={{ color: 'var(--color-brand-blue)' }}>{unreadCount} non lues</div>
+              {notifications.length > 0 && notificationUnreadCount > 0 && (
+                <div className="px-4 py-1 text-xs" style={{ color: 'var(--color-brand-blue)' }}>{notificationUnreadCount} non lues</div>
               )}
               <div className="max-h-80 overflow-y-auto">
                 {notifications.length === 0 ? (
@@ -331,7 +256,7 @@ export function Navigation() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="rounded-full">
+              <Button variant="ghost" size="icon" className="rounded-full" aria-label="Menu utilisateur">
                 <Avatar className="h-8 w-8">
                   {avatar && <AvatarImage src={avatar} alt={user.name} className="object-cover" />}
                   <AvatarFallback style={{ backgroundColor: 'var(--color-brand-blue)', color: 'white' }}>
@@ -376,26 +301,26 @@ export function Navigation() {
                 style={pathname === item.href ? { color: 'var(--color-brand-blue)' } : {}}
               >
                 <span style={{ color: pathname === item.href ? '#2563B0' : '#6B7280' }}>
-                  {item.icon}
+                  <item.icon className="h-4 w-4" />
                 </span>
                 <span>{item.label}</span>
               </Link>
             ))}
             <Link
-              href="/dashboard/settings"
+              href={settingsNavigationItem.href}
               onClick={() => setMobileMenuOpen(false)}
               className={cn(
                 'flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                pathname === '/dashboard/settings'
+                pathname === settingsNavigationItem.href
                   ? 'bg-blue-50 text-sidebar-primary'
                   : 'hover:bg-gray-50'
               )}
-              style={pathname === '/dashboard/settings' ? { color: 'var(--color-brand-blue)' } : {}}
+              style={pathname === settingsNavigationItem.href ? { color: 'var(--color-brand-blue)' } : {}}
             >
-              <span style={{ color: pathname === '/dashboard/settings' ? '#2563B0' : '#6B7280' }}>
-                <Settings className="h-4 w-4" />
+              <span style={{ color: pathname === settingsNavigationItem.href ? '#2563B0' : '#6B7280' }}>
+                <settingsNavigationItem.icon className="h-4 w-4" />
               </span>
-              <span>Parametres</span>
+              <span>{settingsNavigationItem.label}</span>
             </Link>
           </nav>
           <DrawerFooter>

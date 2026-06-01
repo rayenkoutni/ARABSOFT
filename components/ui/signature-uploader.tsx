@@ -5,16 +5,15 @@ import { Upload, PencilLine, Trash2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SignaturePad } from '@/components/ui/signature-pad'
 import { useToast } from '@/hooks/use-toast'
+import {
+  dataUrlToSignatureFile,
+  deleteSignature as deleteRhSignature,
+  uploadSignature,
+} from '@/lib/services/client/settings.service'
 
 interface SignatureUploaderProps {
   currentSignatureUrl: string | null
   onSignatureSaved: (url: string) => void
-}
-
-async function dataUrlToFile(dataUrl: string, name: string) {
-  const response = await fetch(dataUrl)
-  const blob = await response.blob()
-  return new File([blob], name, { type: 'image/png' })
 }
 
 export function SignatureUploader({ currentSignatureUrl, onSignatureSaved }: SignatureUploaderProps) {
@@ -34,17 +33,7 @@ export function SignatureUploader({ currentSignatureUrl, onSignatureSaved }: Sig
       const formData = new FormData()
       formData.append('signature', file)
 
-      const response = await fetch('/api/rh/signature', {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => null)
-        throw new Error(body?.error || 'Echec de la sauvegarde de la signature')
-      }
-
-      const body = await response.json()
+      const body = await uploadSignature(formData)
       setSignatureUrl(body.signatureUrl)
       onSignatureSaved(body.signatureUrl)
       setPadOpen(false)
@@ -78,10 +67,7 @@ export function SignatureUploader({ currentSignatureUrl, onSignatureSaved }: Sig
   const handleRemove = async () => {
     try {
       setPendingAction('remove')
-      const response = await fetch('/api/rh/signature', { method: 'DELETE' })
-      if (!response.ok) {
-        throw new Error('Echec de la suppression de la signature')
-      }
+      await deleteRhSignature()
 
       setSignatureUrl(null)
       toast({ description: 'Signature supprimee' })
@@ -138,7 +124,7 @@ export function SignatureUploader({ currentSignatureUrl, onSignatureSaved }: Sig
         open={padOpen}
         onClose={() => setPadOpen(false)}
         onSave={async (pngDataUrl) => {
-          const file = await dataUrlToFile(pngDataUrl, 'signature.png')
+          const file = await dataUrlToSignatureFile(pngDataUrl, 'signature.png')
           await submitSignature(file, 'draw')
         }}
       />

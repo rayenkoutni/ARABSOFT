@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { PROJECT_STATUS, ROLE, TASK_STATUS } from '@/lib/constants'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { Button } from '@/components/ui/button'
@@ -12,13 +12,15 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Progress } from '@/components/ui/progress'
-import { Plus, Calendar, Users, FolderKanban, ArrowRight, AlertCircle } from 'lucide-react'
+import { Plus, Calendar, FolderKanban, ArrowRight } from 'lucide-react'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
+import { getTodayDateOnly } from '@/lib/leave-request'
+import { createProject, fetchProjectTeam, fetchProjects as fetchProjectsList } from '@/lib/services/client/projects.service'
 
 interface Project {
   id: string
@@ -30,11 +32,24 @@ interface Project {
   managerId: string | null
   createdById: string | null
   createdByRole: string | null
+  creator?: {
+    id: string
+    name: string
+  } | null
+  manager?: {
+    id: string
+    name: string
+  } | null
   startDate: string | null
   endDate: string | null
   createdAt: string
   tasks: Task[]
   team: { id: string; name: string }[]
+  changeHistory?: Array<{
+    id: string
+    action: string
+    createdAt: string
+  }>
 }
 
 interface Task {
@@ -83,6 +98,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<string>(PROJECT_STATUS.IN_PROGRESS)
 
   // Form state
   const [formData, setFormData] = useState({
@@ -95,21 +111,19 @@ export default function ProjectsPage() {
   })
 
   const canCreateProject = user?.role === ROLE.MANAGER
+  const todayDate = getTodayDateOnly()
 
   useEffect(() => {
-    fetchProjects()
+    void loadProjects()
     if (canCreateProject) {
-      fetchEmployees()
+      void loadEmployees()
     }
-  }, [])
+  }, [canCreateProject, user?.role])
 
-  const fetchProjects = async () => {
+  const loadProjects = async () => {
     try {
-      const res = await fetch('/api/projects')
-      if (res.ok) {
-        const data = await res.json()
-        setProjects(data)
-      }
+      const { data: projects = [] } = await fetchProjectsList()
+      setProjects(Array.isArray(projects) ? projects : [])
     } catch {
       toast({
         title: 'Impossible de charger les projets',
@@ -120,15 +134,11 @@ export default function ProjectsPage() {
     }
   }
 
-  const fetchEmployees = async () => {
+  const loadEmployees = async () => {
     try {
-      // For manager, use the dedicated team endpoint to get only their team members
       const endpoint = user?.role === ROLE.MANAGER ? '/api/users/team' : '/api/employees'
-      const res = await fetch(endpoint)
-      if (res.ok) {
-        const data = await res.json()
-        setEmployees(data)
-      }
+      const data = await fetchProjectTeam(endpoint)
+      setEmployees(Array.isArray(data) ? data : [])
     } catch {
       toast({
         title: "Impossible de charger l'equipe",
@@ -142,14 +152,8 @@ export default function ProjectsPage() {
     setIsSubmitting(true)
 
     try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
-      })
-
-      if (res.ok) {
-        await fetchProjects()
+      await createProject(formData)
+      await loadProjects()
         setIsDialogOpen(false)
         setFormData({ 
           name: '', 
@@ -159,16 +163,9 @@ export default function ProjectsPage() {
           priority: 'MEDIUM',
           teamMemberIds: [] 
         })
-      } else {
-        const error = await res.json().catch(() => ({}))
-        toast({
-          title: error.error || 'Erreur lors de la creation',
-          variant: 'destructive',
-        })
-      }
-    } catch {
+    } catch (error) {
       toast({
-        title: 'Erreur lors de la creation',
+        title: error instanceof Error ? error.message : 'Erreur lors de la creation',
         variant: 'destructive',
       })
     } finally {
@@ -182,12 +179,33 @@ export default function ProjectsPage() {
     : employees
 
   const getTaskCount = (project: Project) => project.tasks.length
-  const getCompletedTaskCount = (project: Project) => project.tasks.filter(t => t.status === TASK_STATUS.DONE).length
   const getProgress = (project: Project) => {
     if (project.tasks.length === 0) return project.progress || 0
     const completed = project.tasks.filter(t => t.status === TASK_STATUS.DONE).length
     return Math.round((completed / project.tasks.length) * 100)
   }
+  const getProjectOwnershipLabel = (project: Project) => {
+    if (project.changeHistory?.[0]?.action === 'TRANSFERRED' && project.manager?.name) {
+      return `Transferé à: ${project.manager.name}`
+    }
+
+    if (project.createdByRole === ROLE.HR) {
+      return null
+    }
+
+    if (project.creator?.name) {
+      return `Créé par: ${project.creator.name}`
+    }
+
+    return null
+  }
+  const filteredProjects = useMemo(() => {
+    if (statusFilter === 'ALL') {
+      return projects
+    }
+
+    return projects.filter((project) => project.status === statusFilter)
+  }, [projects, statusFilter])
 
   const getInitials = (name: string) => {
     return name
@@ -257,6 +275,7 @@ export default function ProjectsPage() {
                       type="date"
                       value={formData.startDate}
                       onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                      min={todayDate}
                     />
                   </div>
                   <div className="space-y-2">
@@ -266,6 +285,7 @@ export default function ProjectsPage() {
                       type="date"
                       value={formData.endDate}
                       onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                      min={formData.startDate || todayDate}
                     />
                   </div>
                 </div>
@@ -321,26 +341,41 @@ export default function ProjectsPage() {
         )}
       </div>
 
-      {projects.length === 0 ? (
+      <div className="max-w-xs">
+        <Label htmlFor="project-status-filter">Statut</Label>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger id="project-status-filter" className="mt-2">
+            <SelectValue placeholder="Filtrer par statut" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">Tous</SelectItem>
+            <SelectItem value={PROJECT_STATUS.IN_PROGRESS}>En cours</SelectItem>
+            <SelectItem value={PROJECT_STATUS.COMPLETED}>Termine</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {filteredProjects.length === 0 ? (
         <EmptyState
           icon={FolderKanban}
           message="Aucun projet trouve"
-          description="Creez un projet ou attendez qu'une equipe en publie un."
+          description="Aucun projet ne correspond au filtre selectionne."
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((project) => {
+          {filteredProjects.map((project) => {
             const progress = getProgress(project)
+            const ownershipLabel = getProjectOwnershipLabel(project)
             return (
               <Card key={project.id} className="hover:shadow-md transition-shadow">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <CardTitle className="text-lg">{project.name}</CardTitle>
-                      {project.createdByRole && (
+                      {ownershipLabel && (
                         <div className="flex items-center gap-2 mt-1">
                           <Badge variant="outline" className="text-xs">
-                            Créé par: {project.createdByRole}
+                            {ownershipLabel}
                           </Badge>
                           {project.priority && project.priority !== 'MEDIUM' && (
                             <span className={`h-2 w-2 rounded-full ${PRIORITY_COLORS[project.priority]}`} />
@@ -417,4 +452,5 @@ export default function ProjectsPage() {
     </div>
   )
 }
+
 

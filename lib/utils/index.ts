@@ -6,8 +6,6 @@
  */
 
 export * from './common.utils';
-export * from './format.utils';
-export * from './avatar.utils';
 export * from '../constants';
 
 // Do NOT export auth.utils from here - it contains server-only code

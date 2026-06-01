@@ -19,6 +19,11 @@ import { buildRequestCardSearchText, normalizeSearchText } from '@/lib/request-s
 import { requestTypeLabels } from '@/lib/request-type'
 import { Request } from '@/lib/types'
 
+function unwrapRequestsResponse(response: Request[] | { data?: Request[] }) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response.data) ? response.data : []
+}
+
 export default function MyRequestsPage() {
   const { user } = useCurrentUser()
   const [requests, setRequests] = useState<Request[]>([])
@@ -36,8 +41,10 @@ export default function MyRequestsPage() {
 
       try {
         setIsLoading(true)
-        const data = await requestService.getUserRequests(user.id)
-        setRequests(data)
+        const data = unwrapRequestsResponse(
+          await requestService.getUserRequests(user.id) as Request[] | { data?: Request[] }
+        )
+        setRequests(data.filter((request) => request.status !== REQUEST_STATUS.DRAFT))
       } finally {
         setIsLoading(false)
       }
@@ -69,10 +76,6 @@ export default function MyRequestsPage() {
       return request.status === REQUEST_STATUS.PENDING_MANAGER || request.status === REQUEST_STATUS.PENDING_HR
     }
 
-    if (selectedTab === 'draft') {
-      return request.status === REQUEST_STATUS.DRAFT
-    }
-
     if (selectedTab === 'approved') {
       return request.status === REQUEST_STATUS.APPROVED
     }
@@ -85,7 +88,6 @@ export default function MyRequestsPage() {
   })
 
   const pendingCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.PENDING_MANAGER || request.status === REQUEST_STATUS.PENDING_HR).length
-  const draftCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.DRAFT).length
   const approvedCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.APPROVED).length
   const rejectedCount = searchedRequests.filter((request) => request.status === REQUEST_STATUS.REJECTED).length
   const handleDownloadDocument = (request: Request) => {
@@ -129,7 +131,6 @@ export default function MyRequestsPage() {
           <TabsTrigger className="h-9 flex-none px-4" value="approved">Approuvees ({approvedCount})</TabsTrigger>
           <TabsTrigger className="h-9 flex-none px-4" value="rejected">Rejetees ({rejectedCount})</TabsTrigger>
           <TabsTrigger className="h-9 flex-none px-4" value="pending">En attente ({pendingCount})</TabsTrigger>
-          <TabsTrigger className="h-9 flex-none px-4" value="draft">Brouillon ({draftCount})</TabsTrigger>
         </TabsList>
 
         <div className="mt-4 flex flex-col gap-4">
@@ -145,16 +146,18 @@ export default function MyRequestsPage() {
                 type="date"
                 value={startDate}
                 onChange={(event) => setStartDate(event.target.value)}
+                max={endDate || undefined}
                 className="pr-10"
               />
               {startDate && (
                 <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2"
-                  onClick={() => setStartDate('')}
-                >
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2"
+                aria-label="Effacer la date"
+                onClick={() => setStartDate('')}
+              >
                   <X className="h-4 w-4" />
                 </Button>
               )}
@@ -167,16 +170,18 @@ export default function MyRequestsPage() {
                 type="date"
                 value={endDate}
                 onChange={(event) => setEndDate(event.target.value)}
+                min={startDate || undefined}
                 className="pr-10"
               />
               {endDate && (
                 <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2"
-                  onClick={() => setEndDate('')}
-                >
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2"
+                aria-label="Effacer la date"
+                onClick={() => setEndDate('')}
+              >
                   <X className="h-4 w-4" />
                 </Button>
               )}

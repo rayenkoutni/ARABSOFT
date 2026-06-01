@@ -111,6 +111,3 @@ type PrismaLike = {
 };
 
 export const signatureService = new SignatureService();
-export const saveSignature = signatureService.saveSignature.bind(signatureService);
-export const deleteSignature = signatureService.deleteSignature.bind(signatureService);
-export const getRhSignatureUrl = signatureService.getRhSignatureUrl.bind(signatureService);

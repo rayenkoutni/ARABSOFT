@@ -10,7 +10,9 @@ import { resolveSalary } from "@/lib/utils/salary";
 import { getTodayDateOnly, isDateOnlyWithinRange, toDateOnlyValue } from "@/lib/leave-request";
 import { findNearestLeavePeriodInWindow } from "@/lib/leave-request";
 import { createInitialSalaryHistory, syncSalaryHistoryOnCompensationChange } from "@/lib/services/server/salary-history.service";
+import { deletePrivateConversationsForUser } from "@/lib/services/server/shared.service";
 import type { CurrentUser } from "@/lib/services/server/auth.service";
+import type { PaginatedResult, PaginationParams } from "@/lib/types/pagination";
 import {
   applyManagerSkillChanges,
   employeeCreateInputSchema,
@@ -217,21 +219,55 @@ class EmployeesService {
     return employee;
   }
 
-  async listEmployees(actor: CurrentUser) {
+  async listEmployees(
+    actor: CurrentUser,
+    pagination: PaginationParams = {},
+  ): Promise<
+    PaginatedResult<ReturnType<typeof mapEmployeeListItem>> |
+    (Prisma.EmployeeGetPayload<{ include: { manager: { select: { id: true; name: true } } } }> | null)
+  > {
+    const { page = 1, limit = 50 } = pagination;
+
     if (actor.role === Role.RH) {
-      const employees = await prisma.employee.findMany({
-        select: employeeListSelect,
-        orderBy: [{ role: "asc" }, { department: "asc" }, { name: "asc" }],
-      });
-      return employees.map(mapEmployeeListItem);
+      const [employees, total] = await prisma.$transaction([
+        prisma.employee.findMany({
+          select: employeeListSelect,
+          orderBy: [{ role: "asc" }, { department: "asc" }, { name: "asc" }],
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        prisma.employee.count(),
+      ]);
+
+      return {
+        data: employees.map(mapEmployeeListItem),
+        total,
+        page,
+        limit,
+        hasMore: page * limit < total,
+      };
     }
 
     if (actor.role === Role.CHEF) {
-      const team = await prisma.employee.findMany({
-        where: { managerId: actor.id },
-        select: employeeListSelect,
-      });
-      return team.map(mapEmployeeListItem);
+      const where = { managerId: actor.id };
+      const [team, total] = await prisma.$transaction([
+        prisma.employee.findMany({
+          where,
+          select: employeeListSelect,
+          orderBy: { name: "asc" },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        prisma.employee.count({ where }),
+      ]);
+
+      return {
+        data: team.map(mapEmployeeListItem),
+        total,
+        page,
+        limit,
+        hasMore: page * limit < total,
+      };
     }
 
     return prisma.employee.findUnique({
@@ -280,7 +316,7 @@ class EmployeesService {
           managerId: managerId || null,
           hireDate,
           leaveBalance: 0,
-          salaryGradeId: salaryGradeId || null,
+          salaryGradeId,
           salaryOverride: salaryOverride ?? null,
         },
         select: {
@@ -513,7 +549,68 @@ class EmployeesService {
     };
   }
 
-  async deleteEmployee(actor: CurrentUser, employeeId: string) {
+  async getDeleteImpact(actor: CurrentUser, employeeId: string) {
+    if (actor.role !== Role.RH) {
+      throw apiError("Acces refuse", 403);
+    }
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { id: true, role: true },
+    });
+
+    if (!employee) {
+      throw apiError("Employe introuvable", 404);
+    }
+
+    const [managedProjects, availableManagers, activeAssignedTasks] = await prisma.$transaction([
+      prisma.project.findMany({
+        where: {
+          OR: [{ managerId: employeeId }, { createdById: employeeId }],
+          status: { not: "TERMINE" },
+        },
+        select: { id: true, name: true },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.employee.findMany({
+        where: {
+          id: { not: employeeId },
+          role: Role.CHEF,
+        },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+      prisma.task.findMany({
+        where: {
+          assigneeId: employeeId,
+          status: { not: "DONE" },
+        },
+        select: {
+          id: true,
+          title: true,
+          project: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    return {
+      managedProjects,
+      availableManagers,
+      activeAssignedTasks,
+    };
+  }
+
+  async deleteEmployee(
+    actor: CurrentUser,
+    employeeId: string,
+    options: { replacementManagerId?: string | null } = {},
+  ) {
     if (employeeId === actor.id) {
       throw apiError("Vous ne pouvez pas supprimer votre propre compte", 400);
     }
@@ -527,21 +624,148 @@ class EmployeesService {
       throw apiError("Le compte RH principal ne peut pas etre supprime", 403);
     }
 
+    let replacementManager: { id: string; name: string; role: Role } | null = null;
+    if (options.replacementManagerId) {
+      replacementManager = await prisma.employee.findUnique({
+        where: { id: options.replacementManagerId },
+        select: { id: true, name: true, role: true },
+      });
+
+      if (!replacementManager || replacementManager.role !== Role.CHEF) {
+        throw apiError("Le chef de remplacement est introuvable", 404);
+      }
+    }
+
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const ownedProjects = await tx.project.findMany({
+        where: {
+          OR: [{ managerId: employeeId }, { createdById: employeeId }],
+        },
+        select: { id: true },
+      });
+
+      if (ownedProjects.length > 0 && !replacementManager) {
+        throw apiError("Un chef de remplacement est obligatoire pour reaffecter les projets", 400);
+      }
+
+      if (replacementManager) {
+        await tx.project.updateMany({
+          where: { managerId: employeeId },
+          data: { managerId: replacementManager.id },
+        });
+        await tx.project.updateMany({
+          where: { createdById: employeeId },
+          data: {
+            createdById: replacementManager.id,
+            createdByRole: replacementManager.role,
+          },
+        });
+      }
+
+      const assignedTasks = await tx.task.findMany({
+        where: { assigneeId: employeeId },
+        select: {
+          id: true,
+          title: true,
+          project: {
+            select: {
+              name: true,
+              managerId: true,
+            },
+          },
+        },
+      });
+
+      if (assignedTasks.length > 0) {
+        for (const task of assignedTasks) {
+          if (!task.project?.managerId) {
+            throw apiError("Certaines taches ne peuvent pas etre reaffectees automatiquement", 400);
+          }
+
+          await tx.task.update({
+            where: { id: task.id },
+            data: { assigneeId: task.project.managerId },
+          });
+        }
+
+        const managerNotifications = new Map<string, string[]>();
+        for (const task of assignedTasks) {
+          const managerId = task.project!.managerId!;
+          const taskLabel = `${task.title} (${task.project?.name ?? "Projet"})`;
+          managerNotifications.set(managerId, [...(managerNotifications.get(managerId) ?? []), taskLabel]);
+        }
+
+        if (managerNotifications.size > 0) {
+          await tx.notification.createMany({
+            data: Array.from(managerNotifications.entries()).map(([managerId, taskLabels]) => ({
+              employeeId: managerId,
+              title: "Taches a reaffecter",
+              message: `Les taches suivantes ont ete transferees apres suppression d'un collaborateur: ${taskLabels.join(", ")}.`,
+            })),
+          });
+        }
+      }
+
+      await tx.task.updateMany({
+        where: { reviewedById: employeeId },
+        data: { reviewedById: null },
+      });
+      await tx.messageRead.deleteMany({ where: { employeeId } });
       await tx.notification.deleteMany({ where: { employeeId } });
       await tx.requestHistory.deleteMany({ where: { actorId: employeeId } });
       await tx.employeeSkillHistory.deleteMany({ where: { actorId: employeeId } });
       await tx.employeeSkillHistory.deleteMany({ where: { employeeId } });
       await tx.employeeSkill.deleteMany({ where: { employeeId } });
+      await deletePrivateConversationsForUser(employeeId, tx);
 
       const employeeRequests = await tx.request.findMany({ where: { employeeId }, select: { id: true } });
       const requestIds = employeeRequests.map((request) => request.id);
+      await tx.payslip.deleteMany({ where: { employeeId } });
       if (requestIds.length > 0) {
+        await tx.payslip.deleteMany({ where: { requestId: { in: requestIds } } });
+      }
+      if (requestIds.length > 0) {
+        await tx.slaEvent.deleteMany({ where: { requestId: { in: requestIds } } });
         await tx.requestHistory.deleteMany({ where: { requestId: { in: requestIds } } });
         await tx.request.deleteMany({ where: { employeeId } });
       }
 
-      await tx.employee.updateMany({ where: { managerId: employeeId }, data: { managerId: null } });
+      const relatedEvaluations = await tx.evaluation.findMany({
+        where: {
+          OR: [
+            { employeeId },
+            { evaluatorId: employeeId },
+            { validatedById: employeeId },
+          ],
+        },
+        select: { id: true },
+      });
+      const relatedEvaluationIds = relatedEvaluations.map((evaluation) => evaluation.id);
+      if (relatedEvaluationIds.length > 0) {
+        await tx.bonus.deleteMany({
+          where: {
+            OR: [
+              { evaluationId: { in: relatedEvaluationIds } },
+              { employeeId },
+            ],
+          },
+        });
+        await tx.evaluationObjective.deleteMany({
+          where: { evaluationId: { in: relatedEvaluationIds } },
+        });
+        await tx.evaluation.deleteMany({
+          where: { id: { in: relatedEvaluationIds } },
+        });
+      } else {
+        await tx.bonus.deleteMany({ where: { employeeId } });
+      }
+
+      await tx.salaryHistory.deleteMany({ where: { employeeId } });
+
+      await tx.employee.updateMany({
+        where: { managerId: employeeId },
+        data: { managerId: replacementManager?.id ?? null },
+      });
       await tx.employee.delete({ where: { id: employeeId } });
     });
 
@@ -583,31 +807,8 @@ class EmployeesService {
   }
 
   async getChatEmployees(actor: CurrentUser) {
-    if (actor.role === Role.RH) {
-      return prisma.employee.findMany({
-        where: { id: { not: actor.id } },
-        select: chatEmployeeSelect,
-        orderBy: { name: "asc" },
-      });
-    }
-
-    if (actor.role === Role.CHEF) {
-      return prisma.employee.findMany({
-        where: {
-          id: { not: actor.id },
-          OR: [{ managerId: actor.id }, { role: Role.RH }],
-        },
-        select: chatEmployeeSelect,
-        orderBy: { name: "asc" },
-      });
-    }
-
-    const where: Prisma.EmployeeWhereInput = actor.managerId
-      ? { id: { not: actor.id }, OR: [{ id: actor.managerId }, { role: Role.RH }] }
-      : { id: { not: actor.id }, role: Role.RH };
-
     return prisma.employee.findMany({
-      where,
+      where: { id: { not: actor.id } },
       select: chatEmployeeSelect,
       orderBy: { name: "asc" },
     });
@@ -713,7 +914,7 @@ class EmployeesService {
       const employee = await tx.employee.update({
         where: { id: employeeId },
         data: {
-          salaryGradeId: body.salaryGradeId || null,
+          salaryGradeId: body.salaryGradeId ?? existing.salaryGradeId,
           salaryOverride: body.salaryOverride ?? null,
         },
         include: { salaryGrade: true },

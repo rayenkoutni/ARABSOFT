@@ -16,6 +16,13 @@ import { cn } from '@/lib/utils'
 import { usePathname } from 'next/navigation'
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
 import { useToast } from '@/hooks/use-toast'
+import {
+  createConversation,
+  fetchChatEmployees,
+  fetchConversations,
+  fetchMessages,
+  markAsRead,
+} from '@/lib/services/client/chat.service'
 
 interface Participant {
   id: string
@@ -134,11 +141,8 @@ export default function ChatPage() {
     const fetchEmployees = async () => {
       setIsLoadingEmployees(true)
       try {
-        const res = await fetch('/api/employees/chat')
-        if (res.ok) {
-          const data = await res.json()
-          setEmployees(data)
-        }
+        const data = await fetchChatEmployees()
+        setEmployees(Array.isArray(data) ? data : [])
       } catch {
         toast({
           title: "Impossible de charger les collaborateurs",
@@ -175,43 +179,21 @@ export default function ChatPage() {
   // Create new conversation
   const handleCreateConversation = async () => {
     try {
-      const res = await fetch('/api/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: conversationType,
-          name: conversationType === 'GROUP' ? groupName : undefined,
-          participantIds: selectedEmployeeIds
-        })
+      const newConversation = await createConversation({
+        type: conversationType,
+        name: conversationType === 'GROUP' ? groupName : undefined,
+        participantIds: selectedEmployeeIds
       })
-
-      if (res.ok) {
-        const newConversation = await res.json()
-        
-        // Add to conversations list if not already there
-        setConversations(prev => {
-          const exists = prev.some(conv => conv.id === newConversation.id)
-          if (exists) return prev
-          return [newConversation, ...prev]
-        })
-        
-        // Select the new conversation
-        setSelectedConversation(newConversation)
-        
-        // Close the dialog
-        handleDialogClose(false)
-      } else {
-        // Handle error response
-        const errorData = await res.json().catch(() => ({}))
-        const errorMessage = errorData.error || 'Failed to create conversation'
-        toast({
-          title: errorMessage,
-          variant: 'destructive',
-        })
-      }
-    } catch {
+      setConversations(prev => {
+        const exists = prev.some(conv => conv.id === newConversation.id)
+        if (exists) return prev
+        return [newConversation, ...prev]
+      })
+      setSelectedConversation(newConversation)
+      handleDialogClose(false)
+    } catch (error) {
       toast({
-        title: 'Erreur lors de la creation de la conversation',
+        title: error instanceof Error ? error.message : 'Erreur lors de la creation de la conversation',
         variant: 'destructive',
       })
     }
@@ -292,22 +274,19 @@ export default function ChatPage() {
 
   // Fetch conversations
   useEffect(() => {
-    const fetchConversations = async () => {
+    const loadConversations = async () => {
       try {
-        const res = await fetch('/api/conversations')
-        if (res.ok) {
-          const data = await res.json()
-          setConversations(data)
+          const data = await fetchConversations()
+          setConversations(Array.isArray(data) ? data : [])
           
           // Update avatar cache with fresh data from server
-          data.forEach((conversation: any) => {
+          ;(Array.isArray(data) ? data : []).forEach((conversation: any) => {
             conversation.participants.forEach((participant: any) => {
               if (participant.avatar) {
                 saveProfilePicture(participant.id, participant.avatar)
               }
             })
           })
-        }
       } catch {
         toast({
           title: 'Impossible de charger les conversations',
@@ -318,30 +297,27 @@ export default function ChatPage() {
       }
     }
 
-    fetchConversations()
+    void loadConversations()
   }, [])
 
   // Fetch messages when conversation is selected
   useEffect(() => {
     if (!selectedConversation) return
 
-    const fetchMessages = async () => {
+    const loadMessages = async () => {
       setIsLoadingMessages(true)
       try {
-        const res = await fetch(`/api/conversations/${selectedConversation.id}/messages?limit=50`)
-        if (res.ok) {
-          const data = await res.json()
-          setMessages(data.messages)
+          const data = await fetchMessages(selectedConversation.id, 50)
+          setMessages(Array.isArray(data.messages) ? data.messages : [])
           
           // Update avatar cache with fresh data from server
-          data.messages.forEach((message: any) => {
+          ;(Array.isArray(data.messages) ? data.messages : []).forEach((message: any) => {
             if (message.sender?.avatar) {
               saveProfilePicture(message.sender.id, message.sender.avatar)
             }
           })
           
           scrollToBottom()
-        }
       } catch {
         toast({
           title: 'Impossible de charger les messages',
@@ -352,7 +328,7 @@ export default function ChatPage() {
       }
     }
 
-    fetchMessages()
+    void loadMessages()
   }, [selectedConversation])
 
   const scrollToBottom = () => {
@@ -390,7 +366,7 @@ export default function ChatPage() {
       return conversation.name || 'Group Chat'
     }
     const otherParticipant = conversation.participants.find(p => p.id !== user?.id)
-    return otherParticipant?.name || 'Unknown'
+    return otherParticipant?.name || 'Conversation indisponible'
   }
 
   const getInitials = (name: string) => {
@@ -557,9 +533,7 @@ export default function ChatPage() {
                     setSelectedConversation(conversation)
                     if (conversation.unreadCount > 0) {
                       try {
-                        await fetch(`/api/conversations/${conversation.id}/read`, {
-                          method: 'PATCH'
-                        })
+                        await markAsRead(conversation.id)
                         setConversations(prev => prev.map(conv =>
                           conv.id === conversation.id
                             ? { ...conv, unreadCount: 0 }

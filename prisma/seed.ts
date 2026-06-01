@@ -9,6 +9,8 @@ type TaskPriority = "LOW" | "MEDIUM" | "HIGH"
 type TaskStatus = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE"
 type ProjectStatus = "EN_ATTENTE" | "EN_COURS" | "TERMINE"
 
+// Demo accounts — for development and presentation only
+// Never deploy seed data to production
 const roster = {
   rh: {
     email: "rh@demo.com",
@@ -197,6 +199,74 @@ const onboardingDates: Record<string, string> = {
   "collab9@demo.com": "2026-03-19T09:55:00.000Z",
   "collab10@demo.com": "2026-03-20T08:40:00.000Z",
 }
+
+const salaryGrades = [
+  {
+    role: "RH" as Role,
+    level: 1,
+    baseSalary: 2500,
+    description: "Responsable RH",
+  },
+  {
+    role: "CHEF" as Role,
+    level: 1,
+    baseSalary: 2000,
+    description: "Chef Junior",
+  },
+  {
+    role: "CHEF" as Role,
+    level: 2,
+    baseSalary: 2600,
+    description: "Chef Confirme",
+  },
+  {
+    role: "CHEF" as Role,
+    level: 3,
+    baseSalary: 3200,
+    description: "Chef Senior",
+  },
+  {
+    role: "COLLABORATEUR" as Role,
+    level: 1,
+    baseSalary: 1000,
+    description: "Collaborateur Junior",
+  },
+  {
+    role: "COLLABORATEUR" as Role,
+    level: 2,
+    baseSalary: 1400,
+    description: "Collaborateur Confirme",
+  },
+  {
+    role: "COLLABORATEUR" as Role,
+    level: 3,
+    baseSalary: 1800,
+    description: "Collaborateur Senior",
+  },
+] as const
+
+const bonusRules = [
+  {
+    minScore: 0,
+    maxScore: 4.99,
+    percentage: 0,
+  },
+  {
+    minScore: 5,
+    maxScore: 6.99,
+    percentage: 2,
+  },
+  {
+    minScore: 7,
+    maxScore: 8.99,
+    percentage: 5,
+  },
+  {
+    minScore: 9,
+    maxScore: 10,
+    percentage: 8,
+  },
+] as const
 
 const collaboratorProfiles: Record<
   string,
@@ -401,22 +471,6 @@ const demoProjects = [
     progress: 25,
     teamEmails: ["collab1@demo.com", "collab4@demo.com", "collab2@demo.com", "collab5@demo.com"],
   },
-  {
-    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2",
-    name: "Refonte Design System",
-    description: "Refonte des composants visuels et harmonisation de l'identite produit.",
-    managerEmail: "chef2@demo.com",
-    createdByEmail: "rh@demo.com",
-    createdByRole: "RH" as Role,
-    status: "EN_COURS" as ProjectStatus,
-    priority: "MEDIUM",
-    startDate: "2026-03-25T08:30:00.000Z",
-    endDate: "2026-05-05T18:00:00.000Z",
-    createdAt: "2026-03-25T08:30:00.000Z",
-    updatedAt: "2026-04-17T16:30:00.000Z",
-    progress: 35,
-    teamEmails: ["collab3@demo.com", "collab6@demo.com", "collab7@demo.com"],
-  },
 ] as const
 
 const demoTasks = [
@@ -503,66 +557,6 @@ const demoTasks = [
       ["Docker", 3],
     ] as const,
   },
-  {
-    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb005",
-    projectId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2",
-    assigneeEmail: "collab3@demo.com",
-    title: "Audit composants design",
-    description: "Analyser les composants existants et identifier les ecarts visuels.",
-    status: "DONE" as TaskStatus,
-    priority: "MEDIUM" as TaskPriority,
-    dueDate: "2026-04-09T18:00:00.000Z",
-    submittedForReview: false,
-    reviewComment: "Livrable conforme",
-    reviewedByEmail: "chef2@demo.com",
-    reviewedAt: "2026-04-10T12:15:00.000Z",
-    createdAt: "2026-03-29T10:00:00.000Z",
-    updatedAt: "2026-04-10T12:15:00.000Z",
-    requiredSkills: [
-      ["Figma", 4],
-      ["Adobe XD", 4],
-    ] as const,
-  },
-  {
-    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb006",
-    projectId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2",
-    assigneeEmail: "collab6@demo.com",
-    title: "Bibliotheque de styles",
-    description: "Creer les styles partages et les regles de typographie.",
-    status: "IN_PROGRESS" as TaskStatus,
-    priority: "HIGH" as TaskPriority,
-    dueDate: "2026-04-23T18:00:00.000Z",
-    submittedForReview: false,
-    reviewComment: null,
-    reviewedByEmail: null,
-    reviewedAt: null,
-    createdAt: "2026-04-07T09:15:00.000Z",
-    updatedAt: "2026-04-18T10:10:00.000Z",
-    requiredSkills: [
-      ["Figma", 3],
-      ["Adobe XD", 3],
-    ] as const,
-  },
-  {
-    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbb007",
-    projectId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2",
-    assigneeEmail: "collab7@demo.com",
-    title: "Maquettes tableaux de bord",
-    description: "Preparer les maquettes UI des tableaux de bord produit.",
-    status: "TODO" as TaskStatus,
-    priority: "MEDIUM" as TaskPriority,
-    dueDate: "2026-04-25T18:00:00.000Z",
-    submittedForReview: false,
-    reviewComment: null,
-    reviewedByEmail: null,
-    reviewedAt: null,
-    createdAt: "2026-04-16T09:20:00.000Z",
-    updatedAt: "2026-04-16T09:20:00.000Z",
-    requiredSkills: [
-      ["Figma", 4],
-      ["Adobe XD", 4],
-    ] as const,
-  },
 ] as const
 
 function sqlString(value: string | null) {
@@ -589,23 +583,46 @@ function skillTypeSubquery(name: string) {
   return `(SELECT type FROM "Skill" WHERE name = ${sqlString(name)})`
 }
 
+function salaryGradeIdSubquery(role: Role, level = 1) {
+  return `(SELECT id FROM "SalaryGrade" WHERE role = ${sqlString(role)}::"Role" AND level = ${level})`
+}
+
 function buildSql(hashedPassword: string) {
   const statements: string[] = []
 
   statements.push("BEGIN;")
 
+  for (const grade of salaryGrades) {
+    statements.push(`
+INSERT INTO "SalaryGrade" ("id", "role", "level", "baseSalary", "description", "createdAt", "updatedAt")
+VALUES (gen_random_uuid(), ${sqlString(grade.role)}, ${grade.level}, ${grade.baseSalary}, ${sqlString(grade.description)}, NOW(), NOW())
+ON CONFLICT ("role", "level") DO UPDATE
+SET "baseSalary" = EXCLUDED."baseSalary",
+    "description" = EXCLUDED."description",
+    "updatedAt" = NOW();`)
+  }
+
+  statements.push(`
+DELETE FROM "BonusRule";`)
+
+  for (const rule of bonusRules) {
+    statements.push(`
+INSERT INTO "BonusRule" ("id", "minScore", "maxScore", "percentage", "createdAt")
+VALUES (gen_random_uuid(), ${rule.minScore}, ${rule.maxScore}, ${rule.percentage}, NOW());`)
+  }
+
   for (const employee of [roster.rh, ...roster.chefs]) {
     const employment = employmentData[employee.email]
     statements.push(`
-INSERT INTO "Employee" ("id", "name", "email", "password", "phone", "role", "department", "position", "managerId", "hireDate", "leaveBalance", "createdAt", "updatedAt")
-VALUES (gen_random_uuid(), ${sqlString(employee.name)}, ${sqlString(employee.email)}, ${sqlString(hashedPassword)}, ${sqlString(employee.phone)}, ${sqlString(employee.role)}, ${sqlString(employee.department)}, ${sqlString(employee.position)}, NULL, ${sqlTimestamp(employment.hireDate)}, ${employment.leaveBalance}, NOW(), NOW())
+INSERT INTO "Employee" ("id", "name", "email", "password", "phone", "role", "department", "position", "managerId", "hireDate", "leaveBalance", "salaryGradeId", "createdAt", "updatedAt")
+VALUES (gen_random_uuid(), ${sqlString(employee.name)}, ${sqlString(employee.email)}, ${sqlString(hashedPassword)}, ${sqlString(employee.phone)}, ${sqlString(employee.role)}, ${sqlString(employee.department)}, ${sqlString(employee.position)}, NULL, ${sqlTimestamp(employment.hireDate)}, ${employment.leaveBalance}, ${salaryGradeIdSubquery(employee.role)}, NOW(), NOW())
 ON CONFLICT ("email") DO NOTHING;`)
   }
 
   for (const employee of roster.collaborators) {
     const employment = employmentData[employee.email]
     statements.push(`
-INSERT INTO "Employee" ("id", "name", "email", "password", "phone", "role", "department", "position", "managerId", "hireDate", "leaveBalance", "createdAt", "updatedAt")
+INSERT INTO "Employee" ("id", "name", "email", "password", "phone", "role", "department", "position", "managerId", "hireDate", "leaveBalance", "salaryGradeId", "createdAt", "updatedAt")
 VALUES (
   gen_random_uuid(),
   ${sqlString(employee.name)},
@@ -618,6 +635,7 @@ VALUES (
   ${employeeIdSubquery(employee.managerEmail)},
   ${sqlTimestamp(employment.hireDate)},
   ${employment.leaveBalance},
+  ${salaryGradeIdSubquery(employee.role)},
   NOW(),
   NOW()
 )
@@ -798,7 +816,8 @@ function resolveDbContainer() {
 }
 
 async function main() {
-  const hashedPassword = await bcrypt.hash("password123", 10)
+  const SEED_PASSWORD = process.env.SEED_PASSWORD ?? "ChangeMe2024!"
+  const hashedPassword = await bcrypt.hash(SEED_PASSWORD, 10)
   const sql = buildSql(hashedPassword)
   const dbContainer = resolveDbContainer()
 

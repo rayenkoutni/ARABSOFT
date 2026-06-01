@@ -16,6 +16,7 @@ import { slaService } from "@/lib/services/server/sla.service";
 import { ApiError } from "@/lib/api-response";
 import { removeGeneratedDocumentFile } from "@/lib/documents";
 import { AppError } from "@/lib/errors";
+import type { PaginationParams, PaginatedResult } from "@/lib/types/pagination";
 
 const requestInclude = {
   employee: {
@@ -202,12 +203,16 @@ class RequestServerService {
   private async findRequestsWithFallback(args: {
     where: Prisma.RequestWhereInput;
     orderBy: Prisma.RequestOrderByWithRelationInput;
+    skip?: number;
+    take?: number;
   }) {
     try {
       return await prisma.request.findMany({
         where: args.where,
         include: requestInclude,
         orderBy: args.orderBy,
+        skip: args.skip,
+        take: args.take,
       });
     } catch (error) {
       if (
@@ -219,6 +224,8 @@ class RequestServerService {
           where: args.where,
           include: requestIncludeWithoutGeneratedDocument,
           orderBy: args.orderBy,
+          skip: args.skip,
+          take: args.take,
         });
       }
 
@@ -312,61 +319,59 @@ class RequestServerService {
     return { startDate, endDate };
   }
 
-  async getRequestsForUser(user: CurrentUser, view: string | null) {
-    if (user.role === ROLE.HR) {
-      let where: Prisma.RequestWhereInput = {};
+  async getRequestsForUser(user: CurrentUser, view: string | null, pagination: PaginationParams = {}) {
+    const { page = 1, limit = 20 } = pagination;
+    let finalWhere: Prisma.RequestWhereInput = {};
 
+    if (user.role === ROLE.HR) {
       if (view === "rh-pending") {
-        where = {
+        finalWhere = {
           status: { in: [REQUEST_STATUS.PENDING_MANAGER, REQUEST_STATUS.PENDING_HR] },
         };
       } else if (view === "rh-history") {
-        where = {
+        finalWhere = {
           status: { in: [REQUEST_STATUS.APPROVED, REQUEST_STATUS.REJECTED] },
         };
       }
-
-      return this.findRequestsWithFallback({
-        where,
-        orderBy: { createdAt: "desc" },
-      });
-    }
-
-    if (user.role === ROLE.MANAGER) {
+    } else if (user.role === ROLE.MANAGER) {
       const teamMembers = await prisma.employee.findMany({
         where: { managerId: user.id },
         select: { id: true },
       });
       const teamIds = teamMembers.map((employee) => employee.id);
 
-      let where: Prisma.RequestWhereInput = {
+      finalWhere = {
         employeeId: { in: teamIds },
       };
 
       if (view === "pending") {
-        where = {
-          employeeId: { in: teamIds },
+        finalWhere = {
+          ...finalWhere,
           approvalType: APPROVAL_TYPE.MANAGER_THEN_HR,
           status: { in: [REQUEST_STATUS.PENDING_MANAGER, REQUEST_STATUS.PENDING_HR] },
         };
       } else if (view === "history") {
-        where = {
-          employeeId: { in: teamIds },
+        finalWhere = {
+          ...finalWhere,
           approvalType: APPROVAL_TYPE.MANAGER_THEN_HR,
           status: { in: [REQUEST_STATUS.APPROVED, REQUEST_STATUS.REJECTED] },
         };
       }
-
-      return this.findRequestsWithFallback({
-        where,
-        orderBy: { createdAt: "desc" },
-      });
+    } else {
+      finalWhere = { employeeId: user.id };
     }
 
-    return this.findRequestsWithFallback({
-      where: { employeeId: user.id },
-      orderBy: { createdAt: "desc" },
-    });
+    const [data, total] = await Promise.all([
+      this.findRequestsWithFallback({
+        where: finalWhere,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.request.count({ where: finalWhere }),
+    ]);
+
+    return { data, total, page, limit, hasMore: page * limit < total };
   }
 
   async getRequestByIdForUser(id: string, user: CurrentUser) {
@@ -490,6 +495,52 @@ class RequestServerService {
     await slaService.initializeSla(id, input.type);
 
     return updatedRequest;
+  }
+
+  async deleteDraftRequestForUser(id: string, user: CurrentUser) {
+    const existingRequest = await prisma.request.findUnique({
+      where: { id },
+      include: {
+        generatedDocument: true,
+        payslip: {
+          select: { id: true },
+        },
+      },
+    });
+
+    if (!existingRequest) {
+      throw new AppError("Request not found", 404);
+    }
+
+    if (existingRequest.employeeId !== user.id) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    if (existingRequest.status !== REQUEST_STATUS.DRAFT) {
+      throw new ApiError("Seuls les brouillons peuvent etre supprimes.", 400);
+    }
+
+    if (existingRequest.payslip) {
+      throw new ApiError("Ce brouillon ne peut pas etre supprime car une fiche de paie y est liee.", 409);
+    }
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.requestHistory.deleteMany({
+        where: { requestId: id },
+      });
+
+      await tx.slaEvent.deleteMany({
+        where: { requestId: id },
+      });
+
+      await tx.request.delete({
+        where: { id },
+      });
+    });
+
+    if (existingRequest.generatedDocument?.filePath) {
+      await removeGeneratedDocumentFile(existingRequest.generatedDocument.filePath).catch(() => undefined);
+    }
   }
 
   async processRequestAction(user: CurrentUser, requestId: string, action: string, comment?: string | null) {
