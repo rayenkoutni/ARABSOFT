@@ -183,6 +183,51 @@ npm run dev
 
 The dev command compiles and launches the custom server through [scripts/run-dev.mjs](scripts/run-dev.mjs), so you still get Socket.IO, cron startup, and the real server runtime.
 
+## Partner Setup
+
+Use these steps when another teammate needs to see the same demo dataset from this repository.
+
+1. Clone the repository and enter it.
+
+```bash
+git clone https://github.com/rayenkoutni/ARABSOFT.git
+cd ARABSOFT
+```
+
+2. Create the local environment file from the example.
+
+```bash
+cp .env.example .env
+```
+
+3. Set the same seeded login password in `.env`.
+
+```env
+SEED_PASSWORD=ChangeMe2024!
+```
+
+4. Start the required local services.
+
+```bash
+docker compose up -d db kafka
+```
+
+5. Install dependencies, sync the schema, and seed the database.
+
+```bash
+npm install
+npx prisma db push
+npx prisma db seed
+```
+
+6. Start the app.
+
+```bash
+npm run dev
+```
+
+If they want the exact seeded state again later, reset the local database and rerun `npx prisma db seed`.
+
 ## Useful Commands
 
 ```bash
@@ -239,8 +284,10 @@ Examples:
 Default seeded password:
 
 ```text
-password123
+ChangeMe2024!
 ```
+
+Or whatever value is set in `SEED_PASSWORD` before running `npx prisma db seed`.
 
 If you reseed a populated database, verify the resulting records before using the environment for demos.
 
