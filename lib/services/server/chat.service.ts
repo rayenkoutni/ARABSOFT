@@ -7,6 +7,7 @@ import { AppError } from '@/lib/errors';
 
 class ChatService {
   async init() {
+    await kafkaService.waitUntilReady();
     await kafkaService.initProducer();
     await kafkaService.subscribe(KAFKA.TOPICS.CHAT_MESSAGES, this.handleIncomingMessage.bind(this));
   }

@@ -16,16 +16,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Progress } from '@/components/ui/progress'
 import {
+  calculateTechnicalSkillMatch,
   createEmptyTechnicalSkillRow,
   DEFAULT_TECHNICAL_SKILL_LEVEL,
+  EmployeeSkillsListItem,
   getSkillLevelLabel,
   hasDuplicateTechnicalSkills,
+  mapEmployeeSkillsListItems,
   mapTechnicalSkillCatalogItems,
   skillLevelOptions,
   TechnicalSkillCatalogItem,
   TechnicalSkillFormRow,
 } from '@/lib/skills/client'
-import { formatDateOnly } from '@/lib/leave-request'
+import { addDaysToDateOnly, formatDateOnly, getTodayDateOnly, toDateOnlyValue } from '@/lib/leave-request'
 import { 
   Plus, 
   ArrowLeft, 
@@ -45,6 +48,7 @@ import {
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useToast } from '@/hooks/use-toast'
+import { isProjectSlaBreached, PROJECT_SLA_BREACHED_LABEL, PROJECT_SLA_BREACHED_STYLE } from '@/lib/project-sla'
 import {
   deleteProject,
   deleteProjectTask,
@@ -59,6 +63,7 @@ import {
   updateProject,
   updateProjectTask,
 } from '@/lib/services/client/projects.service'
+import { fetchSkillsEmployees } from '@/lib/services/client/skills.service'
 interface Task {
   id: string
   title: string
@@ -95,6 +100,7 @@ interface Project {
   progress: number
   status: string
   priority: string
+  slaBreached: boolean
   startDate: string | null
   endDate: string | null
   createdById: string | null
@@ -171,7 +177,6 @@ const PRIORITIES = [
 ]
 
 const STATUS_LABELS: Record<string, string> = {
-  [PROJECT_STATUS.PENDING]: 'En attente',
   EN_COURS: 'En cours',
   TERMINE: 'Terminé'
 }
@@ -190,6 +195,7 @@ export default function ProjectDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [draggedTask, setDraggedTask] = useState<Task | null>(null)
   const [technicalSkillsCatalog, setTechnicalSkillsCatalog] = useState<TechnicalSkillCatalogItem[]>([])
+  const [teamEmployeeSkills, setTeamEmployeeSkills] = useState<EmployeeSkillsListItem[]>([])
   const [taskDialogError, setTaskDialogError] = useState('')
 
   // AI Task Generation state
@@ -239,6 +245,13 @@ export default function ProjectDetailPage() {
   const canCreateTasks = user?.role === ROLE.MANAGER || user?.role === ROLE.EMPLOYEE
   const canShowTaskButtons = user?.role === ROLE.MANAGER // Only CHEF can see Create Task and Generate AI buttons
   const canManageProject = user?.role === ROLE.MANAGER
+  const todayDate = getTodayDateOnly()
+  const tomorrowDate = addDaysToDateOnly(todayDate, 1)
+  const projectStartDateValue = toDateOnlyValue(project?.startDate)
+  const taskDueDateMin =
+    projectStartDateValue && projectStartDateValue > tomorrowDate
+      ? projectStartDateValue
+      : tomorrowDate
 
   // Add team member state
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false)
@@ -250,6 +263,7 @@ export default function ProjectDetailPage() {
     fetchEmployees()
     if (user?.role === ROLE.MANAGER) {
       void fetchTechnicalSkills()
+      void fetchTeamEmployeeSkills()
     }
   }, [projectId, user?.role])
 
@@ -300,6 +314,22 @@ export default function ProjectDetailPage() {
     } catch {
       toast({
         title: 'Impossible de charger les competences techniques',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const fetchTeamEmployeeSkills = async () => {
+    if (user?.role !== ROLE.MANAGER) {
+      return
+    }
+
+    try {
+      const data = await fetchSkillsEmployees()
+      setTeamEmployeeSkills(mapEmployeeSkillsListItems(data))
+    } catch {
+      toast({
+        title: "Impossible de charger les compétences de l'équipe",
         variant: 'destructive',
       })
     }
@@ -465,16 +495,30 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const handleDeleteTask = async (taskId: string) => {
+  const handleDeleteTask = async (task: Task) => {
+    if (task.status === TASK_STATUS.DONE) {
+      toast({
+        title: 'Une tache terminee ne peut pas etre supprimee',
+        variant: 'destructive',
+      })
+      return
+    }
+
     if (!confirm('Êtes-vous sûr de vouloir supprimer cette tâche?')) return
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/tasks?taskId=${taskId}`, {
+      const res = await fetch(`/api/projects/${projectId}/tasks?taskId=${task.id}`, {
         method: 'DELETE'
       })
 
       if (res.ok) {
         await fetchProject()
+      } else {
+        const error = await res.json().catch(() => ({}))
+        toast({
+          title: error.error || 'Erreur lors de la suppression de la tache',
+          variant: 'destructive',
+        })
       }
     } catch {
       toast({
@@ -554,7 +598,7 @@ export default function ProjectDetailPage() {
         title: '',
         description: '',
         assignedUserId: defaultAssigneeId,
-        dueDate: formatGeneratedDueDate(project?.endDate || ''),
+        dueDate: taskDueDateMin,
         priority: 'MEDIUM',
         comment: ''
       }
@@ -724,6 +768,14 @@ export default function ProjectDetailPage() {
   }
 
   const handleDeleteProject = async () => {
+    if (project?.tasks.some((task) => task.status === TASK_STATUS.DONE)) {
+      toast({
+        title: 'Un projet contenant une tache terminee ne peut pas etre supprime',
+        variant: 'destructive',
+      })
+      return
+    }
+
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce projet? Cette action est irréversible.')) return
     
     try {
@@ -742,14 +794,71 @@ export default function ProjectDetailPage() {
   const availableEmployees = user?.role === ROLE.MANAGER
     ? (employees || []).filter(e => e.managerId === user.id)
     : (employees || [])
+  const projectTeamMembers = useMemo(() => project?.team ?? [], [project?.team])
+  const hasProjectTeamMembers = projectTeamMembers.length > 0
+  const hasCompletedTasks = Boolean(project?.tasks.some((task) => task.status === TASK_STATUS.DONE))
+  const selectedTaskRequiredSkills = useMemo(
+    () => taskRequiredSkills.filter((skill) => skill.skillId),
+    [taskRequiredSkills]
+  )
+  const assigneeMatches = useMemo(() => {
+    const employeeSkillsById = new Map(
+      teamEmployeeSkills.map((employee) => [employee.id, employee.skills])
+    )
+    const skillNamesById = new Map(
+      technicalSkillsCatalog.map((skill) => [skill.id, skill.name])
+    )
+
+    return new Map(
+      projectTeamMembers.map((employee) => {
+        const employeeSkills = employeeSkillsById.get(employee.id) ?? []
+        const employeeLevelsBySkillId = new Map(
+          employeeSkills.map((employeeSkill) => [employeeSkill.skill.id, employeeSkill.level])
+        )
+
+        return [
+          employee.id,
+          {
+            percentage: calculateTechnicalSkillMatch(selectedTaskRequiredSkills, employeeSkills),
+            skills: selectedTaskRequiredSkills.map((requiredSkill) => ({
+              id: requiredSkill.skillId,
+              name: skillNamesById.get(requiredSkill.skillId) ?? '',
+              level: employeeLevelsBySkillId.get(requiredSkill.skillId),
+            })),
+          },
+        ] as const
+      })
+    )
+  }, [
+    projectTeamMembers,
+    selectedTaskRequiredSkills,
+    teamEmployeeSkills,
+    technicalSkillsCatalog,
+  ])
+  const orderedProjectTeamMembers = useMemo(() => {
+    if (selectedTaskRequiredSkills.length === 0) {
+      return projectTeamMembers
+    }
+
+    return projectTeamMembers
+      .map((employee, originalIndex) => ({ employee, originalIndex }))
+      .sort((left, right) => {
+        const percentageDifference =
+          (assigneeMatches.get(right.employee.id)?.percentage ?? 0) -
+          (assigneeMatches.get(left.employee.id)?.percentage ?? 0)
+
+        return percentageDifference || left.originalIndex - right.originalIndex
+      })
+      .map(({ employee }) => employee)
+  }, [assigneeMatches, projectTeamMembers, selectedTaskRequiredSkills.length])
 
   const availableAdditionalRequiredSkills = useMemo(
     () => technicalSkillsCatalog.filter((skill) => !taskRequiredSkills.some((row) => row.skillId === skill.id)),
     [taskRequiredSkills, technicalSkillsCatalog]
   )
   const selectedAssigneeUpcomingLeave = useMemo(
-    () => availableEmployees.find((employee) => employee.id === taskForm.assigneeId)?.upcomingApprovedLeave ?? null,
-    [availableEmployees, taskForm.assigneeId]
+    () => employees.find((employee) => employee.id === taskForm.assigneeId)?.upcomingApprovedLeave ?? null,
+    [employees, taskForm.assigneeId]
   )
 
   const updateRequiredSkillRow = (index: number, updates: Partial<TechnicalSkillFormRow>) => {
@@ -812,6 +921,8 @@ export default function ProjectDetailPage() {
     )
   }
 
+  const projectSlaBreached = isProjectSlaBreached(project)
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -824,11 +935,18 @@ export default function ProjectDetailPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-foreground">{project.name}</h1>
               <Badge className={
-                project.status === 'TERMINE' ? 'bg-green-500' :
-                project.status === 'EN_COURS' ? 'bg-blue-500' : 'bg-yellow-500'
+                project.status === 'TERMINE' ? 'bg-green-500' : 'bg-blue-500'
               }>
                 {STATUS_LABELS[project.status] || project.status}
               </Badge>
+              {projectSlaBreached && (
+                <span
+                  className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
+                  style={PROJECT_SLA_BREACHED_STYLE}
+                >
+                  {PROJECT_SLA_BREACHED_LABEL}
+                </span>
+              )}
               {user?.role === ROLE.HR && (
                 <Badge variant="outline" className="text-blue-600 border-blue-300">
                   Observateur
@@ -856,6 +974,8 @@ export default function ProjectDetailPage() {
                   variant="outline"
                   size="sm"
                   onClick={handleDeleteProject}
+                  disabled={hasCompletedTasks}
+                  title={hasCompletedTasks ? 'Impossible de supprimer un projet avec une tache terminee' : undefined}
                   className="border-red-500 text-red-600 hover:bg-red-50"
                 >
                   <Trash2 className="h-4 w-4 mr-1.5" />
@@ -951,18 +1071,61 @@ export default function ProjectDetailPage() {
                     <Select
                       value={taskForm.assigneeId}
                       onValueChange={(value) => setTaskForm({ ...taskForm, assigneeId: value })}
-                      disabled={user?.role === ROLE.EMPLOYEE}
+                      onOpenChange={(open) => {
+                        if (open && selectedTaskRequiredSkills.length > 0) {
+                          void fetchTeamEmployeeSkills()
+                        }
+                      }}
+                      disabled={user?.role === ROLE.EMPLOYEE || (user?.role === ROLE.MANAGER && !hasProjectTeamMembers)}
                     >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Sélectionner..." />
+                      <SelectTrigger className={`w-full ${user?.role === ROLE.MANAGER && !hasProjectTeamMembers ? '[&>span:last-child]:hidden' : ''}`}>
+                        {user?.role === ROLE.MANAGER && !hasProjectTeamMembers && (
+                          <span className="text-muted-foreground">Aucun membre assigne au projet</span>
+                        )}
+                        <SelectValue placeholder="Sélectionner...">
+                          {selectedTaskRequiredSkills.length > 0
+                            ? projectTeamMembers.find((employee) => employee.id === taskForm.assigneeId)?.name
+                            : undefined}
+                        </SelectValue>
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent
+                        position="popper"
+                        className={selectedTaskRequiredSkills.length > 0 ? 'max-w-[min(32rem,calc(100vw-2rem))]' : undefined}
+                      >
                         {user?.role === ROLE.EMPLOYEE ? (
                           <SelectItem value={user.id}>{user.name} (vous)</SelectItem>
                         ) : (
-                          availableEmployees.map(emp => (
-                            <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
-                          ))
+                          orderedProjectTeamMembers.map((emp) => {
+                            const match = assigneeMatches.get(emp.id)
+
+                            if (selectedTaskRequiredSkills.length === 0 || !match) {
+                              return <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
+                            }
+
+                            return (
+                              <SelectItem
+                                key={emp.id}
+                                value={emp.id}
+                                className="items-start py-2 [&>span:last-child]:block [&>span:last-child]:w-full"
+                              >
+                                <span className="block min-w-0">
+                                  <span className="block truncate font-medium">
+                                    {emp.name} — {match.percentage}%
+                                  </span>
+                                  <span className="mt-1 block space-y-0.5">
+                                    {match.skills.map((skill) => (
+                                      <span
+                                        key={skill.id}
+                                        className="block truncate text-xs font-normal text-muted-foreground"
+                                      >
+                                        {skill.name} : {skill.level ? getSkillLevelLabel(skill.level) : 'Non acquis'}
+                                      </span>
+                                    ))}
+                                  </span>
+                                </span>
+                              </SelectItem>
+                            )
+                          })
                         )}
                       </SelectContent>
                     </Select>
@@ -994,6 +1157,7 @@ export default function ProjectDetailPage() {
                     type="date"
                     value={taskForm.dueDate}
                     onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
+                    min={taskDueDateMin}
                   />
                 </div>
                 {user?.role === ROLE.MANAGER && (
@@ -1099,7 +1263,7 @@ export default function ProjectDetailPage() {
                   <Button type="button" variant="outline" onClick={() => setIsTaskDialogOpen(false)}>
                     Annuler
                   </Button>
-                  <Button type="submit" disabled={isSubmitting}>
+                  <Button type="submit" disabled={isSubmitting || (user?.role === ROLE.MANAGER && !hasProjectTeamMembers)}>
                     {isSubmitting ? 'Création...' : 'Créer la tâche'}
                   </Button>
                 </DialogFooter>
@@ -1253,6 +1417,7 @@ export default function ProjectDetailPage() {
                             type="date"
                             value={task.dueDate}
                             onChange={(e) => handleUpdateGeneratedTask(index, 'dueDate', e.target.value)}
+                            min={taskDueDateMin}
                             className="border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
                           />
                         </div>
@@ -1438,14 +1603,16 @@ export default function ProjectDetailPage() {
                                   <Eye className="h-3 w-3 text-amber-600" />
                                 </Button>
                               )}
-                               <Button
-                                 variant="ghost"
-                                 size="icon"
-                                 className="h-6 w-6"
-                                 onClick={() => handleDeleteTask(task.id)}
-                               >
-                                 <Trash2 className="h-3 w-3 text-muted-foreground" />
-                               </Button>
+                              {task.status !== TASK_STATUS.DONE && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={() => handleDeleteTask(task)}
+                                >
+                                  <Trash2 className="h-3 w-3 text-muted-foreground" />
+                                </Button>
+                              )}
                              </div>
                            )}
 

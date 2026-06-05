@@ -7,7 +7,7 @@ type EmployeeSkillHistoryAction = "ADD" | "LEVEL_UPDATE" | "REMOVE"
 type RequestType = "CONGE" | "AUTORISATION" | "PRET" | "DOCUMENT"
 type TaskPriority = "LOW" | "MEDIUM" | "HIGH"
 type TaskStatus = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE"
-type ProjectStatus = "EN_ATTENTE" | "EN_COURS" | "TERMINE"
+type ProjectStatus = "EN_COURS" | "TERMINE"
 
 // Demo accounts — for development and presentation only
 // Never deploy seed data to production

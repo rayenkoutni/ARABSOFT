@@ -14,6 +14,7 @@ import type { PaginationParams, PaginatedResult } from "@/lib/types/pagination";
 import path from "path";
 import { parse as parseEnv } from "dotenv";
 import { getTodayDateOnly, parseDateOnlyToUtcDate, toDateOnlyValue } from "@/lib/leave-request";
+import { hasProjectReachedPlannedEndDate, isProjectSlaBreached } from "@/lib/project-sla";
 
 interface TeamSkill {
   level: number;
@@ -41,6 +42,15 @@ interface TaskTemplate {
 
 type PartialPreviewTask = Partial<PreviewTask>;
 type ProjectDbClient = Prisma.TransactionClient | typeof prisma;
+const allowedProjectStatuses = ["EN_COURS", "TERMINE"] as const;
+
+function parseProjectStatus(status: string): ProjectStatus {
+  if (!allowedProjectStatuses.includes(status as (typeof allowedProjectStatuses)[number])) {
+    throw apiError("Statut de projet invalide", 400);
+  }
+
+  return status as ProjectStatus;
+}
 
 async function resolveGroqApiKey() {
   try {
@@ -65,13 +75,38 @@ function addDays(date: Date, days: number) {
 }
 
 function buildDueDate(startDate: Date | null, endDate: Date | null, index: number, totalTasks: number) {
-  const start = startDate ?? new Date();
+  const today = parseDateOnlyToUtcDate(getTodayDateOnly()) ?? new Date();
+  const start = startDate && startDate > today ? startDate : today;
   const fallbackEnd = addDays(start, 14);
   const end = endDate && endDate > start ? endDate : fallbackEnd;
   const rangeMs = Math.max(end.getTime() - start.getTime(), 24 * 60 * 60 * 1000);
   const step = rangeMs / Math.max(totalTasks, 1);
   const dueDate = new Date(start.getTime() + step * (index + 1));
   return (dueDate > end ? end : dueDate).toISOString();
+}
+
+function isGeneratedDueDateUsable(value: string | null | undefined, startDate: Date | null, endDate: Date | null) {
+  const normalizedDueDate = toDateOnlyValue(value);
+  if (!normalizedDueDate) {
+    return false;
+  }
+
+  const today = getTodayDateOnly();
+  if (normalizedDueDate <= today) {
+    return false;
+  }
+
+  const projectStartDate = toDateOnlyValue(startDate);
+  if (projectStartDate && projectStartDate > today && normalizedDueDate < projectStartDate) {
+    return false;
+  }
+
+  const projectEndDate = toDateOnlyValue(endDate);
+  if (projectEndDate && projectEndDate > today && normalizedDueDate > projectEndDate) {
+    return false;
+  }
+
+  return true;
 }
 
 function getPhaseTemplates(projectName: string, phase: string): TaskTemplate[] {
@@ -362,8 +397,8 @@ function completeGeneratedTasks(args: {
       description: (task.description ?? "").trim() || args.fallbackTasks[index]?.description || `Contribution planifiee pour ${title}.`,
       assignedUserId: task.assignedUserId ?? args.activeMembers[index % args.activeMembers.length].id,
       dueDate:
-        task.dueDate && !Number.isNaN(new Date(task.dueDate).getTime())
-          ? new Date(task.dueDate).toISOString()
+        isGeneratedDueDateUsable(task.dueDate, args.startDate, args.endDate)
+          ? new Date(task.dueDate as string).toISOString()
           : buildDueDate(args.startDate, args.endDate, index, args.fallbackTasks.length),
       priority:
         task.priority === "HIGH" || task.priority === "MEDIUM" || task.priority === "LOW"
@@ -428,8 +463,8 @@ export function validateTaskDueDateForProject(
   }
 
   const today = getTodayDateOnly();
-  if (normalizedDueDate < today) {
-    throw apiError("La date d'echeance d'une tache ne peut pas etre dans le passe", 400);
+  if (normalizedDueDate <= today) {
+    throw apiError("La date d'echeance d'une tache doit etre au moins un jour apres aujourd'hui", 400);
   }
 
   const projectStartDate = toDateOnlyValue(projectSchedule.startDate);
@@ -438,7 +473,7 @@ export function validateTaskDueDateForProject(
   }
 
   const projectEndDate = toDateOnlyValue(projectSchedule.endDate);
-  if (projectEndDate && normalizedDueDate > projectEndDate) {
+  if (projectEndDate && projectEndDate > today && normalizedDueDate > projectEndDate) {
     throw apiError("La date d'echeance d'une tache doit etre anterieure ou egale a la date de fin du projet", 400);
   }
 
@@ -446,7 +481,11 @@ export function validateTaskDueDateForProject(
 }
 
 class ProjectsService {
-  private validateProjectDates(startDateInput?: string | null, endDateInput?: string | null) {
+  private validateProjectDates(
+    startDateInput?: string | null,
+    endDateInput?: string | null,
+    options?: { allowPastStartDate?: boolean; allowPastEndDate?: boolean },
+  ) {
     const today = getTodayDateOnly();
     const startDate = startDateInput ? parseDateOnlyToUtcDate(startDateInput) : null;
     const endDate = endDateInput ? parseDateOnlyToUtcDate(endDateInput) : null;
@@ -459,16 +498,16 @@ class ProjectsService {
       throw apiError("La date de fin du projet est invalide", 400);
     }
 
-    if (startDateInput && startDateInput < today) {
+    if (startDateInput && startDateInput < today && !options?.allowPastStartDate) {
       throw apiError("La date de debut du projet ne peut pas etre dans le passe", 400);
     }
 
-    if (endDateInput && endDateInput < today) {
+    if (endDateInput && endDateInput < today && !options?.allowPastEndDate) {
       throw apiError("La date de fin du projet ne peut pas etre dans le passe", 400);
     }
 
-    if (startDateInput && endDateInput && endDateInput < startDateInput) {
-      throw apiError("La date de fin du projet doit etre posterieure ou egale a la date de debut", 400);
+    if (startDateInput && endDateInput && endDateInput <= startDateInput) {
+      throw apiError("La date de fin du projet doit etre au moins un jour apres la date de debut", 400);
     }
 
     return { startDate, endDate };
@@ -619,7 +658,12 @@ class ProjectsService {
         : typeof body.endDate === "string" && body.endDate
           ? body.endDate
           : null;
-    const validatedProjectDates = this.validateProjectDates(nextStartDateInput, nextEndDateInput);
+    const currentStartDateInput = toDateOnlyValue(project.startDate) || null;
+    const currentEndDateInput = toDateOnlyValue(project.endDate) || null;
+    const validatedProjectDates = this.validateProjectDates(nextStartDateInput, nextEndDateInput, {
+      allowPastStartDate: nextStartDateInput === currentStartDateInput,
+      allowPastEndDate: nextEndDateInput === currentEndDateInput,
+    });
 
     if (user.role === ROLE.MANAGER && isRHProject && !isOwnProject) {
       const oldValues = JSON.stringify({
@@ -678,6 +722,7 @@ class ProjectsService {
       endDate?: Date | null;
       priority?: string;
       status?: ProjectStatus;
+      slaBreached?: boolean;
       team?: { set: Array<{ id: string }> };
     } = {};
 
@@ -697,7 +742,19 @@ class ProjectsService {
       updateData.priority = String(body.priority);
     }
     if (body.status && typeof body.status === "string") {
-      updateData.status = body.status as ProjectStatus;
+      updateData.status = parseProjectStatus(body.status);
+    }
+    const nextProjectStatus = updateData.status ?? project.status;
+    const nextProjectEndDate = body.endDate !== undefined ? updateData.endDate ?? null : project.endDate;
+    if (
+      isProjectSlaBreached({
+        status: project.status,
+        endDate: project.endDate,
+        slaBreached: project.slaBreached,
+      }) ||
+      (nextProjectStatus === "TERMINE" && hasProjectReachedPlannedEndDate(nextProjectEndDate))
+    ) {
+      updateData.slaBreached = true;
     }
     if (Array.isArray(body.teamMemberIds)) {
       updateData.team = {
@@ -751,6 +808,13 @@ class ProjectsService {
       throw apiError("Vous ne pouvez pas supprimer ce projet", 403);
     }
 
+    const completedTaskCount = await prisma.task.count({
+      where: { projectId, status: "DONE" },
+    });
+    if (completedTaskCount > 0) {
+      throw apiError("Un projet contenant une tache terminee ne peut pas etre supprime", 400);
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.task.deleteMany({ where: { projectId } });
       await tx.projectChangeHistory.deleteMany({ where: { projectId } });
@@ -788,7 +852,12 @@ class ProjectsService {
       const newValues = JSON.parse(change.newValues || "{}") as Record<string, string | null>;
       const nextStartDateInput = newValues.startDate ?? toDateOnlyValue(change.project.startDate) ?? null;
       const nextEndDateInput = newValues.endDate ?? toDateOnlyValue(change.project.endDate) ?? null;
-      const validatedProjectDates = this.validateProjectDates(nextStartDateInput, nextEndDateInput);
+      const validatedProjectDates = this.validateProjectDates(nextStartDateInput, nextEndDateInput, {
+        allowPastStartDate: nextStartDateInput === (toDateOnlyValue(change.project.startDate) || null),
+        allowPastEndDate: nextEndDateInput === (toDateOnlyValue(change.project.endDate) || null),
+      });
+      const nextStatus = newValues.status ? parseProjectStatus(newValues.status) : change.project.status;
+      const nextEndDate = newValues.endDate ? validatedProjectDates.endDate : change.project.endDate;
       return prisma.$transaction(async (tx) => {
         const updatedProject = await tx.project.update({
           where: { id: projectId },
@@ -798,7 +867,11 @@ class ProjectsService {
             startDate: newValues.startDate ? validatedProjectDates.startDate : null,
             endDate: newValues.endDate ? validatedProjectDates.endDate : null,
             priority: newValues.priority ?? change.project.priority,
-            status: (newValues.status as ProjectStatus | null) ?? change.project.status,
+            status: nextStatus,
+            slaBreached:
+              change.project.slaBreached ||
+              isProjectSlaBreached(change.project) ||
+              (nextStatus === "TERMINE" && hasProjectReachedPlannedEndDate(nextEndDate)),
           },
           include: {
             tasks: true,
@@ -1165,15 +1238,17 @@ Retourne UNIQUEMENT ce tableau JSON :
       const completedTasks = allTasks.filter((task) => task.status === "DONE").length;
       const progress = allTasks.length > 0 ? Math.round((completedTasks / allTasks.length) * 100) : 0;
       const status =
-        allTasks.length === 0
-          ? "EN_ATTENTE"
-          : completedTasks === allTasks.length
-            ? "TERMINE"
-            : "EN_COURS";
+        allTasks.length > 0 && completedTasks === allTasks.length
+          ? "TERMINE"
+          : "EN_COURS";
+      const slaBreached =
+        project.slaBreached ||
+        isProjectSlaBreached(project) ||
+        (status === "TERMINE" && hasProjectReachedPlannedEndDate(project.endDate));
 
       await tx.project.update({
         where: { id: projectId },
-        data: { progress, status },
+        data: { progress, status, slaBreached },
       });
 
       const createdTasks = await tx.task.findMany({

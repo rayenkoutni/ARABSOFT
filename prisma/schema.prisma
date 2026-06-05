@@ -53,7 +53,6 @@ enum TaskPriority {
 }
 
 enum ProjectStatus {
-  EN_ATTENTE
   EN_COURS
   TERMINE
 }
@@ -245,6 +244,7 @@ model Project {
   priority        String        @default("MEDIUM")
   startDate       DateTime?
   endDate         DateTime?
+  slaBreached     Boolean       @default(false)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 

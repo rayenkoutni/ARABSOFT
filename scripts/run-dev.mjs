@@ -10,6 +10,26 @@ const projectRoot = path.resolve(__dirname, "..")
 const port = Number.parseInt(process.env.PORT || "3000", 10)
 const lockPath = path.join(projectRoot, ".next", "dev", "lock")
 const pidPath = path.join(projectRoot, ".next", "dev-server.pid")
+const timeoutNegativeWarningFlag = "--disable-warning=TimeoutNegativeWarning"
+
+function supportsDisableWarningFlag(nodeVersion) {
+  const [major = 0, minor = 0] = nodeVersion.split(".").map((part) => Number.parseInt(part, 10))
+
+  return major > 21 || (major === 21 && minor >= 3) || (major === 20 && minor >= 11)
+}
+
+function withDisabledTimeoutNegativeWarning(existingNodeOptions) {
+  if (!supportsDisableWarningFlag(process.versions.node)) {
+    return existingNodeOptions
+  }
+
+  const options = existingNodeOptions?.trim()
+  if (options?.includes(timeoutNegativeWarningFlag)) {
+    return options
+  }
+
+  return [options, timeoutNegativeWarningFlag].filter(Boolean).join(" ")
+}
 
 function isPortInUse(portToCheck) {
   return new Promise((resolve) => {
@@ -176,8 +196,15 @@ async function main() {
   })
   await patchNextEsmSpecifiers(compiledFile)
 
+  const childEnv = { ...process.env }
+  const nodeOptions = withDisabledTimeoutNegativeWarning(childEnv.NODE_OPTIONS)
+  if (nodeOptions) {
+    childEnv.NODE_OPTIONS = nodeOptions
+  }
+
   const child = spawn(process.execPath, [compiledFile], {
     cwd: projectRoot,
+    env: childEnv,
     stdio: "inherit",
   })
 

@@ -289,7 +289,7 @@ export default function SettingsPage() {
       setIsTransferring(true)
       setTransferError('')
       await transferRhAccess(transferForm)
-      router.push('/login')
+      router.push('/')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Echec du transfert RH'
       setTransferError(message)

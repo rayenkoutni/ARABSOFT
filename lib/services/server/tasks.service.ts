@@ -14,6 +14,7 @@ import { notificationServerService } from "@/lib/services/server/notification.se
 import { validateTaskDueDateForProject } from "@/lib/services/server/projects.service";
 import { apiError } from "@/lib/utils/api-response";
 import { getTodayDateOnly, toDateOnlyValue } from "@/lib/leave-request";
+import { hasProjectReachedPlannedEndDate, isProjectSlaBreached } from "@/lib/project-sla";
 import type { PaginationParams, PaginatedResult } from "@/lib/types/pagination";
 
 interface SubmitReviewInput {
@@ -79,19 +80,29 @@ class TasksService {
   }
 
   private async recalculateProjectProgress(projectId: string, db: TaskDbClient = prisma) {
-    const allTasks = await db.task.findMany({ where: { projectId } });
+    const [project, allTasks] = await Promise.all([
+      db.project.findUnique({
+        where: { id: projectId },
+        select: { endDate: true, status: true, slaBreached: true },
+      }),
+      db.task.findMany({ where: { projectId } }),
+    ]);
     const completedTasks = allTasks.filter((task) => task.status === "DONE").length;
     const progress = allTasks.length > 0 ? Math.round((completedTasks / allTasks.length) * 100) : 0;
     const status =
-      allTasks.length === 0
-        ? "EN_ATTENTE"
-        : completedTasks === allTasks.length
-          ? "TERMINE"
-          : "EN_COURS";
+      allTasks.length > 0 && completedTasks === allTasks.length
+        ? "TERMINE"
+        : "EN_COURS";
+    const slaBreached = Boolean(
+      project &&
+        (project.slaBreached ||
+          isProjectSlaBreached(project) ||
+          (status === "TERMINE" && hasProjectReachedPlannedEndDate(project.endDate))),
+    );
 
     await db.project.update({
       where: { id: projectId },
-      data: { progress, status },
+      data: { progress, status, slaBreached },
     });
   }
 
@@ -140,7 +151,7 @@ class TasksService {
     const { project, teamIds } = await assertProjectAccess(user, projectId);
 
     if (user.role === "CHEF" && !teamIds.includes(input.assigneeId)) {
-      throw apiError("Vous ne pouvez assigner qu'aux membres de votre equipe", 400);
+      throw apiError("Vous ne pouvez assigner qu'aux membres du projet", 400);
     }
 
     if (user.role === "COLLABORATEUR") {
@@ -302,6 +313,10 @@ class TasksService {
 
     if (!(task.project.createdById === user.id || task.project.managerId === user.id)) {
       throw apiError("Vous ne pouvez pas supprimer les taches d'autres projets", 403);
+    }
+
+    if (task.status === "DONE") {
+      throw apiError("Une tache terminee ne peut pas etre supprimee", 400);
     }
 
     await prisma.$transaction(async (tx) => {

@@ -1,13 +1,11 @@
 import { PROJECT_STATUS, REQUEST_STATUS, REQUEST_TYPE, ROLE, TASK_PRIORITY, TASK_STATUS } from '@/lib/constants'
 
 export const PROJECT_STATUS_LABELS = {
-  [PROJECT_STATUS.PENDING]: 'En attente',
   [PROJECT_STATUS.IN_PROGRESS]: 'En cours',
   [PROJECT_STATUS.COMPLETED]: 'Termine',
 } as const
 
 export const PROJECT_STATUS_COLORS = {
-  [PROJECT_STATUS.PENDING]: { backgroundColor: '#FEF3C7', color: '#92400E' },
   [PROJECT_STATUS.IN_PROGRESS]: { backgroundColor: '#DBEAFE', color: '#1D4ED8' },
   [PROJECT_STATUS.COMPLETED]: { backgroundColor: '#DCFCE7', color: '#166534' },
 } as const
@@ -55,7 +53,7 @@ export const TASK_PRIORITY_CONFIG = {
 export const SLA_STATUS_CONFIG = {
   MET: { label: 'Conforme', style: { backgroundColor: '#DCFCE7', color: '#166534' } },
   WARNING: { label: 'Attention', style: { backgroundColor: '#FEF3C7', color: '#92400E' } },
-  BREACHED: { label: 'SLA Depasse', style: { backgroundColor: '#FEE2E2', color: '#991B1B' } },
+  BREACHED: { label: 'SLA dépassé', style: { backgroundColor: '#FEE2E2', color: '#991B1B' } },
 } as const
 
 export const ROLE_CONFIG = {

@@ -34,10 +34,11 @@ interface StatusBadgeProps {
 export function StatusBadge({ status, domain, className }: StatusBadgeProps) {
   const configMap = STATUS_CONFIG[domain] as Record<string, { label: string; style: React.CSSProperties }>
   const config = configMap[status]
+  const radiusClass = domain === 'sla' ? 'rounded-md' : 'rounded'
 
   return (
     <span
-      className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${className ?? ''}`.trim()}
+      className={`inline-flex items-center ${radiusClass} px-2 py-0.5 text-xs font-medium ${className ?? ''}`.trim()}
       style={config?.style}
     >
       {config?.label ?? status}

@@ -95,10 +95,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
 
       const responseText = await res.text()
-      const data = responseText ? JSON.parse(responseText) : null
+      const contentType = res.headers.get('content-type') ?? ''
+      const data = responseText && contentType.includes('application/json')
+        ? JSON.parse(responseText)
+        : null
 
       if (!res.ok) {
-        throw new Error(data?.error || 'Erreur lors de la connexion')
+        throw new Error(data?.error || `Erreur lors de la connexion (${res.status})`)
       }
 
       if (!data) {

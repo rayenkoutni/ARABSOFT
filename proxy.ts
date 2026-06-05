@@ -39,9 +39,9 @@ function isRateLimited(ip: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Middleware
+// Proxy
 // ---------------------------------------------------------------------------
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const method = request.method;
   const authRateLimitBypassPaths = new Set([

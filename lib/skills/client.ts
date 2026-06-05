@@ -38,6 +38,13 @@ export interface TechnicalSkillFormRow {
   level: number
 }
 
+export interface EmployeeTechnicalSkillLevel {
+  level: number
+  skill: {
+    id: string
+  }
+}
+
 export interface EmployeeSkillProfileItem {
   id: string
   employeeId: string
@@ -136,6 +143,28 @@ export function getSelectedTechnicalSkillIds(rows: TechnicalSkillFormRow[]) {
 export function hasDuplicateTechnicalSkills(rows: TechnicalSkillFormRow[]) {
   const selectedSkillIds = getSelectedTechnicalSkillIds(rows)
   return new Set(selectedSkillIds).size !== selectedSkillIds.length
+}
+
+export function calculateTechnicalSkillMatch(
+  requiredSkills: TechnicalSkillFormRow[],
+  employeeSkills: EmployeeTechnicalSkillLevel[]
+) {
+  const selectedRequiredSkills = requiredSkills.filter((skill) => skill.skillId)
+  if (selectedRequiredSkills.length === 0) {
+    return 0
+  }
+
+  const employeeLevelBySkillId = new Map(
+    employeeSkills.map((employeeSkill) => [employeeSkill.skill.id, employeeSkill.level])
+  )
+  const skillWeight = 100 / selectedRequiredSkills.length
+  const total = selectedRequiredSkills.reduce((match, requiredSkill) => {
+    const employeeLevel = employeeLevelBySkillId.get(requiredSkill.skillId) ?? 0
+    const contributionRatio = Math.min(employeeLevel / requiredSkill.level, 1)
+    return match + contributionRatio * skillWeight
+  }, 0)
+
+  return Math.round(total)
 }
 
 export function mapTechnicalSkillCatalogItems(input: unknown): TechnicalSkillCatalogItem[] {

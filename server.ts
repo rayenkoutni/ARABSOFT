@@ -68,8 +68,8 @@ async function startServer() {
     )
 
     if (dev) {
-      console.info(`> Warming up critical routes (/ , /login, /dashboard)...`)
-      const warmupRoutes = ["/", "/login", "/dashboard"]
+      console.info(`> Warming up critical routes (/ , /dashboard)...`)
+      const warmupRoutes = ["/", "/dashboard"]
 
       const warmup = async () => {
         for (const route of warmupRoutes) {

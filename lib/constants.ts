@@ -29,7 +29,6 @@ export const TASK_PRIORITY = {
 
 // Project Statuses (matches Prisma enum)
 export const PROJECT_STATUS = {
-  PENDING: 'EN_ATTENTE',
   IN_PROGRESS: 'EN_COURS',
   COMPLETED: 'TERMINE',
 } as const;

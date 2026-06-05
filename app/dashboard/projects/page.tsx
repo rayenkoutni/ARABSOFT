@@ -19,7 +19,8 @@ import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
-import { getTodayDateOnly } from '@/lib/leave-request'
+import { addDaysToDateOnly, getTodayDateOnly } from '@/lib/leave-request'
+import { isProjectSlaBreached, PROJECT_SLA_BREACHED_LABEL, PROJECT_SLA_BREACHED_STYLE } from '@/lib/project-sla'
 import { createProject, fetchProjectTeam, fetchProjects as fetchProjectsList } from '@/lib/services/client/projects.service'
 
 interface Project {
@@ -29,6 +30,7 @@ interface Project {
   progress: number
   status: string
   priority: string
+  slaBreached: boolean
   managerId: string | null
   createdById: string | null
   createdByRole: string | null
@@ -67,13 +69,11 @@ interface Employee {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  [PROJECT_STATUS.PENDING]: 'En attente',
   [PROJECT_STATUS.IN_PROGRESS]: 'En cours',
   TERMINE: 'Terminé'
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  [PROJECT_STATUS.PENDING]: 'bg-yellow-500',
   [PROJECT_STATUS.IN_PROGRESS]: 'bg-blue-500',
   [PROJECT_STATUS.COMPLETED]: 'bg-green-500'
 }
@@ -112,6 +112,7 @@ export default function ProjectsPage() {
 
   const canCreateProject = user?.role === ROLE.MANAGER
   const todayDate = getTodayDateOnly()
+  const projectEndMinDate = addDaysToDateOnly(formData.startDate || todayDate, 1)
 
   useEffect(() => {
     void loadProjects()
@@ -274,7 +275,15 @@ export default function ProjectsPage() {
                       id="startDate"
                       type="date"
                       value={formData.startDate}
-                      onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                      onChange={(e) => {
+                        const startDate = e.target.value
+                        const endMinDate = addDaysToDateOnly(startDate || todayDate, 1)
+                        setFormData({
+                          ...formData,
+                          startDate,
+                          endDate: formData.endDate && formData.endDate < endMinDate ? '' : formData.endDate,
+                        })
+                      }}
                       min={todayDate}
                     />
                   </div>
@@ -285,7 +294,7 @@ export default function ProjectsPage() {
                       type="date"
                       value={formData.endDate}
                       onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                      min={formData.startDate || todayDate}
+                      min={projectEndMinDate}
                     />
                   </div>
                 </div>
@@ -366,6 +375,7 @@ export default function ProjectsPage() {
           {filteredProjects.map((project) => {
             const progress = getProgress(project)
             const ownershipLabel = getProjectOwnershipLabel(project)
+            const projectSlaBreached = isProjectSlaBreached(project)
             return (
               <Card key={project.id} className="hover:shadow-md transition-shadow">
                 <CardHeader className="pb-2">
@@ -409,6 +419,14 @@ export default function ProjectsPage() {
                       <Badge variant="outline" className="text-xs">
                         {PRIORITY_LABELS[project.priority] || project.priority}
                       </Badge>
+                      {projectSlaBreached && (
+                        <span
+                          className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
+                          style={PROJECT_SLA_BREACHED_STYLE}
+                        >
+                          {PROJECT_SLA_BREACHED_LABEL}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
