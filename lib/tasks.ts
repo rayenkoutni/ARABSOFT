@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient, SkillType } from "@prisma/client"
 import { z } from "zod"
 import { skillLevelSchema } from "./skills"
-import { isValidDateOnlyInput } from "./leave-request"
+import { getTodayDateOnly, isValidDateOnlyInput, parseDateOnlyToUtcDate, toDateOnlyValue } from "./leave-request"
 
 type TaskDbClient = PrismaClient | Prisma.TransactionClient
 
@@ -63,6 +63,11 @@ export const taskCreateInputSchema = z.object({
 })
 
 export type TaskCreateInput = z.infer<typeof taskCreateInputSchema>
+
+export interface ProjectScheduleBounds {
+  startDate?: Date | null
+  endDate?: Date | null
+}
 
 export const taskWithRelationsInclude = {
   assignee: {
@@ -148,4 +153,38 @@ export async function validateTaskRequiredSkills(
       minimumLevel: requiredSkill.minimumLevel,
     }
   })
+}
+
+export function validateTaskDueDateWithinProjectSchedule(
+  dueDateInput: string,
+  projectSchedule: ProjectScheduleBounds
+) {
+  const normalizedDueDate = toDateOnlyValue(dueDateInput)
+  const parsedDueDate = normalizedDueDate ? parseDateOnlyToUtcDate(normalizedDueDate) : null
+  if (!parsedDueDate || !normalizedDueDate) {
+    throw new TaskInputError("La date d'echeance d'une tache est invalide.", 400)
+  }
+
+  const today = getTodayDateOnly()
+  if (normalizedDueDate <= today) {
+    throw new TaskInputError("La date d'echeance d'une tache doit etre au moins un jour apres aujourd'hui.", 400)
+  }
+
+  const projectStartDate = toDateOnlyValue(projectSchedule.startDate)
+  if (projectStartDate && normalizedDueDate < projectStartDate) {
+    throw new TaskInputError(
+      "La date d'echeance d'une tache doit etre posterieure ou egale a la date de debut du projet.",
+      400
+    )
+  }
+
+  const projectEndDate = toDateOnlyValue(projectSchedule.endDate)
+  if (projectEndDate && projectEndDate > today && normalizedDueDate > projectEndDate) {
+    throw new TaskInputError(
+      "La date d'echeance d'une tache doit etre anterieure ou egale a la date de fin du projet.",
+      400
+    )
+  }
+
+  return parsedDueDate
 }

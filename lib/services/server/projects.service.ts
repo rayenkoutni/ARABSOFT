@@ -4,8 +4,9 @@ import { Prisma, ProjectStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CurrentUser } from "@/lib/services/server/auth.service";
 import { assertProjectAccess, getManagerTeamMemberIds } from "@/lib/services/server/shared.service";
+import { createTasksInProject } from "@/lib/services/server/tasks.service";
 import type { PreviewTask } from "@/lib/services/server/types";
-import { taskWithRelationsInclude } from "@/lib/tasks";
+import { taskCreateInputSchema, taskWithRelationsInclude, type TaskCreateInput, validateTaskDueDateWithinProjectSchedule } from "@/lib/tasks";
 import { apiError } from "@/lib/utils/api-response";
 import Groq from "groq-sdk";
 import { promises as fs } from "fs";
@@ -456,28 +457,7 @@ export function validateTaskDueDateForProject(
   dueDateInput: string,
   projectSchedule: { startDate?: Date | null; endDate?: Date | null },
 ) {
-  const normalizedDueDate = toDateOnlyValue(dueDateInput);
-  const parsedDueDate = normalizedDueDate ? parseDateOnlyToUtcDate(normalizedDueDate) : null;
-  if (!parsedDueDate || !normalizedDueDate) {
-    throw apiError("La date d'echeance d'une tache est invalide", 400);
-  }
-
-  const today = getTodayDateOnly();
-  if (normalizedDueDate <= today) {
-    throw apiError("La date d'echeance d'une tache doit etre au moins un jour apres aujourd'hui", 400);
-  }
-
-  const projectStartDate = toDateOnlyValue(projectSchedule.startDate);
-  if (projectStartDate && normalizedDueDate < projectStartDate) {
-    throw apiError("La date d'echeance d'une tache doit etre posterieure ou egale a la date de debut du projet", 400);
-  }
-
-  const projectEndDate = toDateOnlyValue(projectSchedule.endDate);
-  if (projectEndDate && projectEndDate > today && normalizedDueDate > projectEndDate) {
-    throw apiError("La date d'echeance d'une tache doit etre anterieure ou egale a la date de fin du projet", 400);
-  }
-
-  return parsedDueDate;
+  return validateTaskDueDateWithinProjectSchedule(dueDateInput, projectSchedule);
 }
 
 class ProjectsService {
@@ -511,6 +491,230 @@ class ProjectsService {
     }
 
     return { startDate, endDate };
+  }
+
+  private getProjectGenerationPhase(progress: number) {
+    return progress < 30
+      ? "demarrage (socle technique, architecture, modeles coeur)"
+      : progress < 70
+        ? "milieu (fonctionnalites, integrations, interface)"
+        : "finalisation (tests, corrections, optimisation, mise en production)";
+  }
+
+  private mapProcessedTeamMembers(
+    team: Array<{
+      id: string;
+      name: string;
+      position: string | null;
+      role: string;
+      skills: TeamSkill[];
+      requests: TeamLeaveRequest[];
+    }>
+  ) {
+    const today = new Date();
+
+    return team.map((member) => {
+      const isOnLeave = member.requests.some((request) => {
+        const start = request.startDate ? new Date(request.startDate) : null;
+        const end = request.endDate ? new Date(request.endDate) : null;
+        if (!start || !end) return false;
+        return today >= start && today <= end;
+      });
+
+      return {
+        id: member.id,
+        name: member.name,
+        jobTitle: member.position || member.role,
+        status: isOnLeave ? "en_conge" : "active",
+        skills: member.skills.map((skill) => ({ name: skill.skill.name, level: skill.level })) || [],
+      } satisfies ProcessedTeamMember;
+    });
+  }
+
+  private async generateProjectTaskSuggestions(args: {
+    project: {
+      name: string;
+      description: string | null;
+      startDate: Date | null;
+      endDate: Date | null;
+      progress: number | null;
+      tasks: Array<{ title: string; status: string }>;
+    };
+    team: Array<{
+      id: string;
+      name: string;
+      position: string | null;
+      role: string;
+      skills: TeamSkill[];
+      requests: TeamLeaveRequest[];
+    }>;
+  }) {
+    if (args.team.length === 0) {
+      throw apiError("Aucun membre dans l'equipe. Veuillez d'abord assigner des membres au projet.", 400);
+    }
+
+    const processedTeamMembers = this.mapProcessedTeamMembers(args.team);
+    const unavailableMembers = processedTeamMembers.filter((member) => member.status === "en_conge");
+    const activeMembers = processedTeamMembers.filter((member) => member.status === "active");
+
+    if (activeMembers.length === 0) {
+      throw apiError("Aucun membre actif n'est disponible pour recevoir des taches actuellement.", 400);
+    }
+
+    const progress = args.project.progress ?? 0;
+    const phase = this.getProjectGenerationPhase(progress);
+    const maxPerPerson = Math.max(1, Math.ceil(Math.min(activeMembers.length * 2, 10) * 0.4));
+    const totalTasks = Math.max(activeMembers.length, Math.min(activeMembers.length * 2, 10));
+    const apiKey = await resolveGroqApiKey();
+
+    const systemPrompt = `Tu es un moteur de generation et d'affectation de taches projet.
+Tu dois repondre UNIQUEMENT en FRANCAIS.
+Retourne UNIQUEMENT un tableau JSON valide, sans markdown, sans explication et sans bloc de code.
+
+REGLES STRICTES :
+1. Ne repete jamais et ne reformule jamais les taches existantes.
+2. Tous les membres actifs doivent recevoir au moins 1 tache.
+3. Nombre maximum de taches par personne : ${maxPerPerson}. Ne jamais depasser cette limite.
+4. Pour chaque tache, cherche le meilleur match de competences. Si cette personne est ACTIVE, assigne-lui la tache. Si elle est en_conge, assigne la tache au meilleur profil actif suivant et indique-le clairement en francais dans le commentaire.
+5. Si aucun profil actif n'est evident, assigne la tache a la personne active la moins chargee et explique-le en francais dans le commentaire.
+6. Chaque generation doit adopter un angle different. Si les taches existantes couvrent deja un domaine, propose autre chose utile au projet.
+7. Respecte strictement la phase du projet.
+8. Genere un vrai plan de charge d'equipe, pas une seule tache.
+9. Dans chaque commentaire, mentionne la competence principale et le niveau qui justifient l'affectation.
+10. Tout le contenu retourne doit etre en francais : titres, descriptions, commentaires et formulations.
+11. N'utilise pas d'anglais sauf pour des noms techniques indispensables comme React, Node.js ou PostgreSQL.`;
+
+    const userPrompt = `Projet : ${args.project.name}
+Description : ${args.project.description}
+Debut : ${args.project.startDate ? new Date(args.project.startDate).toISOString() : "Non definie"} | Fin : ${args.project.endDate ? new Date(args.project.endDate).toISOString() : "Non definie"}
+Progression : ${progress}% - Phase : ${phase}
+
+TACHES EXISTANTES - ne pas les repeter ni les reformuler :
+${args.project.tasks.map((task) => `- [${task.status}] ${task.title}`).join("\n") || "aucune pour le moment"}
+
+MEMBRES ACTIFS (les taches doivent etre assignees a ces personnes) :
+${activeMembers.map((member) => `- id: ${member.id} | nom: ${member.name} | poste: ${member.jobTitle} | competences: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "generaliste"}`).join("\n")}
+
+MEMBRES INDISPONIBLES (ne pas leur assigner de tache, les mentionner seulement dans les commentaires si utile) :
+${unavailableMembers.map((member) => `- nom: ${member.name} | competences: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "generaliste"} | statut: ${member.status}`).join("\n") || "aucun"}
+
+Genere exactement ${totalTasks} taches. Maximum ${maxPerPerson} taches par personne. Chaque membre actif doit recevoir au moins 1 tache.
+Les taches doivent etre reparties de facon equilibree selon la charge actuelle et le niveau de competences.
+
+Retourne UNIQUEMENT ce tableau JSON :
+[
+  {
+    "title": string,
+    "description": string,
+    "assignedUserId": string,
+    "dueDate": string,
+    "priority": "HIGH" | "MEDIUM" | "LOW",
+    "comment": string | null
+  }
+]`;
+
+    let generatedTasks: PreviewTask[];
+    let generationMode: "ai" | "fallback" = "ai";
+    let warning: string | null = null;
+
+    if (!apiKey) {
+      generationMode = "fallback";
+      warning = "GROQ_API_KEY est absente. Une suggestion locale a ete utilisee.";
+      generatedTasks = buildFallbackTasks({
+        project: args.project,
+        activeMembers,
+        unavailableMembers,
+        phase,
+        totalTasks,
+        startDate: args.project.startDate,
+        endDate: args.project.endDate,
+      });
+    } else {
+      try {
+        const groq = new Groq({ apiKey });
+        const completion = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          temperature: 0.3,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        });
+
+        const text = completion.choices[0]?.message?.content;
+        if (!text) {
+          throw apiError("Le service IA est indisponible. Une suggestion locale a ete utilisee.", 500);
+        }
+
+        generatedTasks = parseAiTasks(text) as PreviewTask[];
+
+        if (hasTooMuchEnglishInGeneratedTasks(generatedTasks)) {
+          throw apiError("La reponse IA contient trop d'anglais. Une suggestion locale a ete utilisee.", 422);
+        }
+      } catch (error) {
+        const groqError = error as { status?: number; code?: string; message?: string };
+        generationMode = "fallback";
+        warning =
+          groqError.status === 401 ||
+          groqError.code === "invalid_api_key" ||
+          groqError.message?.includes("Invalid API Key")
+            ? "La cle API Groq est invalide. Une suggestion locale a ete utilisee."
+            : groqError.message?.includes("contient trop d'anglais")
+              ? null
+              : "Le service IA est indisponible. Une suggestion locale a ete utilisee.";
+        generatedTasks = buildFallbackTasks({
+          project: args.project,
+          activeMembers,
+          unavailableMembers,
+          phase,
+          totalTasks,
+          startDate: args.project.startDate,
+          endDate: args.project.endDate,
+        });
+      }
+    }
+
+    const fallbackTasks = buildFallbackTasks({
+      project: args.project,
+      activeMembers,
+      unavailableMembers,
+      phase,
+      totalTasks,
+      startDate: args.project.startDate,
+      endDate: args.project.endDate,
+    });
+
+    const existingTitles = new Set(args.project.tasks.map((task) => normalizeTaskTitle(task.title)));
+    const completedTasks = completeGeneratedTasks({
+      generatedTasks,
+      fallbackTasks,
+      activeMembers,
+      maxPerPerson,
+      startDate: args.project.startDate,
+      endDate: args.project.endDate,
+      existingTitles,
+    });
+
+    for (const task of completedTasks) {
+      if (!task.title || !task.description || !task.assignedUserId || !task.dueDate || !task.priority) {
+        throw apiError("Les taches generees sont incompletes", 422);
+      }
+
+      const validUser = activeMembers.find((member) => member.id === task.assignedUserId);
+      if (!validUser) {
+        throw apiError(`Utilisateur invalide assigne: ${task.assignedUserId}`, 422);
+      }
+
+      validateTaskDueDateWithinProjectSchedule(task.dueDate, args.project);
+    }
+
+    return {
+      tasks: completedTasks,
+      projectName: args.project.name,
+      teamMembers: activeMembers,
+      generationMode,
+      warning,
+    };
   }
 
   async listProjects(user: CurrentUser, pagination: PaginationParams = {}) {
@@ -568,9 +772,14 @@ class ProjectsService {
     endDate?: string | null;
     priority?: string | null;
     teamMemberIds?: string[];
+    tasks: TaskCreateInput[];
   }) {
     if (user.role !== ROLE.MANAGER) {
       throw apiError("Acces refuse: seul un chef peut creer un projet", 403);
+    }
+
+    if (!body.tasks.length) {
+      throw apiError("Ajoutez au moins une tache avant de creer le projet.", 400);
     }
 
     if (body.teamMemberIds?.length) {
@@ -582,6 +791,14 @@ class ProjectsService {
     }
 
     const { startDate, endDate } = this.validateProjectDates(body.startDate, body.endDate);
+    const projectTeamIds = body.teamMemberIds ?? [];
+    const invalidTaskAssignees = body.tasks
+      .map((task) => task.assigneeId)
+      .filter((assigneeId) => !projectTeamIds.includes(assigneeId));
+
+    if (invalidTaskAssignees.length > 0) {
+      throw apiError("Chaque tache doit etre assignee a un membre selectionne dans l'equipe du projet.", 400);
+    }
 
     return prisma.$transaction(async (tx) => {
       const project = await tx.project.create({
@@ -612,6 +829,29 @@ class ProjectsService {
         },
       });
 
+      await createTasksInProject({
+        db: tx,
+        user,
+        project,
+        tasks: body.tasks,
+        skipSelfNotification: true,
+      });
+
+      const refreshedProject = await tx.project.findUniqueOrThrow({
+        where: { id: project.id },
+        include: {
+          tasks: { include: taskWithRelationsInclude },
+          team: { select: { id: true, name: true } },
+          manager: { select: { id: true, name: true } },
+          creator: { select: { id: true, name: true } },
+          changeHistory: {
+            where: { action: "TRANSFERRED" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+      });
+
       if (body.teamMemberIds?.length) {
         await tx.notification.createMany({
           data: body.teamMemberIds.map((memberId) => ({
@@ -628,12 +868,12 @@ class ProjectsService {
           actorName: user.name,
           action: "CREATED",
           entity: "Project",
-          entityId: project.id,
-          details: JSON.stringify({ name: project.name, status: project.status }),
+          entityId: refreshedProject.id,
+          details: JSON.stringify({ name: refreshedProject.name, status: refreshedProject.status }),
         },
       });
 
-      return project;
+      return refreshedProject;
     });
   }
 
@@ -943,8 +1183,64 @@ class ProjectsService {
     throw apiError("Invalid action", 400);
   }
 
+  async generateTasksForProjectDraft(user: CurrentUser, body: {
+    name: string;
+    description?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    teamMemberIds: string[];
+  }) {
+    if (user.role !== ROLE.MANAGER) {
+      throw apiError("Acces refuse a ce projet", 403);
+    }
+
+    if (!body.teamMemberIds.length) {
+      throw apiError("Selectionnez au moins un membre d'equipe avant de generer les taches.", 400);
+    }
+
+    const validTeamIds = await getManagerTeamMemberIds(user.id);
+    const invalidMembers = body.teamMemberIds.filter((id) => !validTeamIds.includes(id));
+    if (invalidMembers.length > 0) {
+      throw apiError("Vous ne pouvez assigner que des membres de votre equipe", 400);
+    }
+
+    const { startDate, endDate } = this.validateProjectDates(body.startDate, body.endDate);
+    const team = await prisma.employee.findMany({
+      where: { id: { in: body.teamMemberIds } },
+      select: {
+        id: true,
+        name: true,
+        position: true,
+        role: true,
+        skills: {
+          select: {
+            level: true,
+            skill: {
+              select: { name: true },
+            },
+          },
+        },
+        requests: {
+          where: { type: "CONGE", status: "APPROUVE" },
+          select: { startDate: true, endDate: true },
+        },
+      },
+    });
+
+    return this.generateProjectTaskSuggestions({
+      project: {
+        name: body.name,
+        description: body.description ?? null,
+        startDate,
+        endDate,
+        progress: 0,
+        tasks: [],
+      },
+      team,
+    });
+  }
+
   async generateTasksForProject(user: CurrentUser, projectId: string) {
-    const apiKey = await resolveGroqApiKey();
     const { project } = await assertProjectAccess(user, projectId);
 
     if (user.role !== ROLE.MANAGER) {
@@ -999,191 +1295,17 @@ class ProjectsService {
     if (detailedProject.team.length === 0) {
       throw apiError("Aucun membre dans l'equipe. Veuillez d'abord assigner des membres au projet.", 400);
     }
-
-    const progress = detailedProject.progress ?? 0;
-    const phase =
-      progress < 30
-        ? "demarrage (socle technique, architecture, modeles coeur)"
-        : progress < 70
-          ? "milieu (fonctionnalites, integrations, interface)"
-          : "finalisation (tests, corrections, optimisation, mise en production)";
-
-    const today = new Date();
-    const processedTeamMembers: ProcessedTeamMember[] = detailedProject.team.map((member) => {
-      const isOnLeave = member.requests.some((request: TeamLeaveRequest) => {
-        const start = request.startDate ? new Date(request.startDate) : null;
-        const end = request.endDate ? new Date(request.endDate) : null;
-        if (!start || !end) return false;
-        return today >= start && today <= end;
-      });
-
-      return {
-        id: member.id,
-        name: member.name,
-        jobTitle: member.position || member.role,
-        status: isOnLeave ? "en_conge" : "active",
-        skills: member.skills.map((skill: TeamSkill) => ({ name: skill.skill.name, level: skill.level })) || [],
-      };
-    });
-
-    const unavailableMembers = processedTeamMembers.filter((member) => member.status === "en_conge");
-    const activeMembers = processedTeamMembers.filter((member) => member.status === "active");
-
-    if (activeMembers.length === 0) {
-      throw apiError("Aucun membre actif n'est disponible pour recevoir des taches actuellement.", 400);
-    }
-
-    const maxPerPerson = Math.max(1, Math.ceil(Math.min(activeMembers.length * 2, 10) * 0.4));
-    const totalTasks = Math.max(activeMembers.length, Math.min(activeMembers.length * 2, 10));
-
-    const systemPrompt = `Tu es un moteur de generation et d'affectation de taches projet.
-Tu dois repondre UNIQUEMENT en FRANCAIS.
-Retourne UNIQUEMENT un tableau JSON valide, sans markdown, sans explication et sans bloc de code.
-
-REGLES STRICTES :
-1. Ne repete jamais et ne reformule jamais les taches existantes.
-2. Tous les membres actifs doivent recevoir au moins 1 tache.
-3. Nombre maximum de taches par personne : ${maxPerPerson}. Ne jamais depasser cette limite.
-4. Pour chaque tache, cherche le meilleur match de competences. Si cette personne est ACTIVE, assigne-lui la tache. Si elle est en_conge, assigne la tache au meilleur profil actif suivant et indique-le clairement en francais dans le commentaire.
-5. Si aucun profil actif n'est evident, assigne la tache a la personne active la moins chargee et explique-le en francais dans le commentaire.
-6. Chaque generation doit adopter un angle different. Si les taches existantes couvrent deja un domaine, propose autre chose utile au projet.
-7. Respecte strictement la phase du projet.
-8. Genere un vrai plan de charge d'equipe, pas une seule tache.
-9. Dans chaque commentaire, mentionne la competence principale et le niveau qui justifient l'affectation.
-10. Tout le contenu retourne doit etre en francais : titres, descriptions, commentaires et formulations.
-11. N'utilise pas d'anglais sauf pour des noms techniques indispensables comme React, Node.js ou PostgreSQL.`;
-
-    const userPrompt = `Projet : ${detailedProject.name}
-Description : ${detailedProject.description}
-Debut : ${detailedProject.startDate ? new Date(detailedProject.startDate).toISOString() : "Non definie"} | Fin : ${detailedProject.endDate ? new Date(detailedProject.endDate).toISOString() : "Non definie"}
-Progression : ${progress}% - Phase : ${phase}
-
-TACHES EXISTANTES - ne pas les repeter ni les reformuler :
-${detailedProject.tasks.map((task) => `- [${task.status}] ${task.title}`).join("\n") || "aucune pour le moment"}
-
-MEMBRES ACTIFS (les taches doivent etre assignees a ces personnes) :
-${activeMembers.map((member) => `- id: ${member.id} | nom: ${member.name} | poste: ${member.jobTitle} | competences: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "generaliste"}`).join("\n")}
-
-MEMBRES INDISPONIBLES (ne pas leur assigner de tache, les mentionner seulement dans les commentaires si utile) :
-${unavailableMembers.map((member) => `- nom: ${member.name} | competences: ${member.skills.map((skill) => `${skill.name}(${skill.level}/5)`).join(", ") || "generaliste"} | statut: ${member.status}`).join("\n") || "aucun"}
-
-Genere exactement ${totalTasks} taches. Maximum ${maxPerPerson} taches par personne. Chaque membre actif doit recevoir au moins 1 tache.
-Les taches doivent etre reparties de facon equilibree selon la charge actuelle et le niveau de competences.
-
-Retourne UNIQUEMENT ce tableau JSON :
-[
-  {
-    "title": string,
-    "description": string,
-    "assignedUserId": string,
-    "dueDate": string,
-    "priority": "HIGH" | "MEDIUM" | "LOW",
-    "comment": string | null
-  }
-]`;
-
-    let generatedTasks: PreviewTask[];
-    let generationMode: "ai" | "fallback" = "ai";
-    let warning: string | null = null;
-
-    if (!apiKey) {
-      generationMode = "fallback";
-      warning = "GROQ_API_KEY est absente. Une suggestion locale a ete utilisee.";
-      generatedTasks = buildFallbackTasks({
-        project: detailedProject,
-        activeMembers,
-        unavailableMembers,
-        phase,
-        totalTasks,
+    return this.generateProjectTaskSuggestions({
+      project: {
+        name: detailedProject.name,
+        description: detailedProject.description,
         startDate: detailedProject.startDate ? new Date(detailedProject.startDate) : null,
         endDate: detailedProject.endDate ? new Date(detailedProject.endDate) : null,
-      });
-    } else {
-      try {
-        const groq = new Groq({ apiKey });
-        const completion = await groq.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          temperature: 0.3,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-        });
-
-        const text = completion.choices[0]?.message?.content;
-        if (!text) {
-          throw apiError("Le service IA est indisponible. Une suggestion locale a ete utilisee.", 500);
-        }
-
-        generatedTasks = parseAiTasks(text) as PreviewTask[];
-
-        if (hasTooMuchEnglishInGeneratedTasks(generatedTasks)) {
-          throw apiError("La reponse IA contient trop d'anglais. Une suggestion locale a ete utilisee.", 422);
-        }
-      } catch (error) {
-        const groqError = error as { status?: number; code?: string; message?: string };
-        generationMode = "fallback";
-        warning =
-          groqError.status === 401 ||
-          groqError.code === "invalid_api_key" ||
-          groqError.message?.includes("Invalid API Key")
-            ? "La cle API Groq est invalide. Une suggestion locale a ete utilisee."
-            : groqError.message?.includes("contient trop d'anglais")
-              ? "La reponse IA etait majoritairement en anglais. Une suggestion locale en francais a ete utilisee."
-            : "Le service IA est indisponible. Une suggestion locale a ete utilisee.";
-        generatedTasks = buildFallbackTasks({
-          project: detailedProject,
-          activeMembers,
-          unavailableMembers,
-          phase,
-          totalTasks,
-          startDate: detailedProject.startDate ? new Date(detailedProject.startDate) : null,
-          endDate: detailedProject.endDate ? new Date(detailedProject.endDate) : null,
-        });
-      }
-    }
-
-    const fallbackTasks = buildFallbackTasks({
-      project: detailedProject,
-      activeMembers,
-      unavailableMembers,
-      phase,
-      totalTasks,
-      startDate: detailedProject.startDate ? new Date(detailedProject.startDate) : null,
-      endDate: detailedProject.endDate ? new Date(detailedProject.endDate) : null,
+        progress: detailedProject.progress,
+        tasks: detailedProject.tasks,
+      },
+      team: detailedProject.team,
     });
-
-    const existingTitles = new Set(detailedProject.tasks.map((task) => normalizeTaskTitle(task.title)));
-    generatedTasks = completeGeneratedTasks({
-      generatedTasks,
-      fallbackTasks,
-      activeMembers,
-      maxPerPerson,
-      startDate: detailedProject.startDate ? new Date(detailedProject.startDate) : null,
-      endDate: detailedProject.endDate ? new Date(detailedProject.endDate) : null,
-      existingTitles,
-    });
-
-    for (const task of generatedTasks) {
-      if (!task.title || !task.description || !task.assignedUserId || !task.dueDate || !task.priority) {
-        throw apiError("Les taches generees sont incompletes", 422);
-      }
-
-      const validUser = activeMembers.find((member) => member.id === task.assignedUserId);
-      if (!validUser) {
-        throw apiError(`Utilisateur invalide assigne: ${task.assignedUserId}`, 422);
-      }
-
-      validateTaskDueDateForProject(task.dueDate, detailedProject);
-    }
-
-    return {
-      tasks: generatedTasks,
-      projectName: detailedProject.name,
-      teamMembers: activeMembers,
-      generationMode,
-      warning,
-    };
   }
 
   async saveGeneratedTasks(user: CurrentUser, projectId: string, tasks: PreviewTask[]) {
@@ -1202,37 +1324,25 @@ Retourne UNIQUEMENT ce tableau JSON :
       throw apiError("Acces refuse a ce projet", 403);
     }
 
-    const taskData = tasks.map((task) => ({
-      title: task.title,
-      description: task.description,
-      assigneeId: task.assignedUserId,
-      projectId,
-      dueDate: validateTaskDueDateForProject(task.dueDate, project),
-      priority: task.priority,
-      status: "TODO" as const,
-    }));
+    const taskInputs = tasks.map((task) =>
+      taskCreateInputSchema.parse({
+        title: task.title,
+        description: task.description,
+        assigneeId: task.assignedUserId,
+        dueDate: task.dueDate,
+        priority: task.priority,
+        requiredSkills: [],
+      })
+    );
 
     return prisma.$transaction(async (tx) => {
-      await tx.task.createMany({
-        data: taskData,
+      const createdTasks = await createTasksInProject({
+        db: tx,
+        user,
+        project,
+        tasks: taskInputs,
+        skipSelfNotification: true,
       });
-
-      const notificationsByAssignee = [...new Set(tasks.map((task) => task.assignedUserId))].map((assigneeId) => {
-        const assigneeTasks = tasks.filter((task) => task.assignedUserId === assigneeId);
-        const taskTitles = assigneeTasks.map((task) => `"${task.title}"`).join(", ");
-
-        return {
-          employeeId: assigneeId,
-          title: "Nouvelles taches assignees",
-          message: `${user.name} vous a assigne ${assigneeTasks.length} tache(s) dans le projet "${project.name}" : ${taskTitles}`,
-        };
-      });
-
-      if (notificationsByAssignee.length > 0) {
-        await tx.notification.createMany({
-          data: notificationsByAssignee,
-        });
-      }
 
       const allTasks = await tx.task.findMany({ where: { projectId } });
       const completedTasks = allTasks.filter((task) => task.status === "DONE").length;
@@ -1249,18 +1359,6 @@ Retourne UNIQUEMENT ce tableau JSON :
       await tx.project.update({
         where: { id: projectId },
         data: { progress, status, slaBreached },
-      });
-
-      const createdTasks = await tx.task.findMany({
-        where: {
-          projectId,
-          OR: taskData.map((task) => ({
-            title: task.title,
-            assigneeId: task.assigneeId,
-          })),
-        },
-        orderBy: { createdAt: "desc" },
-        take: taskData.length,
       });
 
       return {

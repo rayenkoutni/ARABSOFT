@@ -99,6 +99,16 @@ export async function generateProjectTasks(projectId: string) {
   return res.json();
 }
 
+export async function generateProjectTasksFromDraft(payload: unknown) {
+  const res = await fetch("/api/projects/generate-tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function saveGeneratedProjectTasks(projectId: string, payload: unknown) {
   const res = await fetch(`/api/projects/${projectId}/generate-tasks`, {
     method: "PUT",

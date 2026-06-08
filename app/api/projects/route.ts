@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/services/server/auth.service";
 import { projectsService } from "@/lib/services/server/projects.service";
+import { taskCreateInputSchema } from "@/lib/tasks";
 import { handleApiError } from "@/lib/utils/api-response";
 import { optionalString, requireString, requireUuid } from "@/lib/utils/validate";
 
@@ -33,6 +34,9 @@ export async function POST(req: Request) {
       teamMemberIds: Array.isArray(body?.teamMemberIds)
         ? body.teamMemberIds.map((memberId: unknown) => requireUuid(memberId, "teamMemberId"))
         : undefined,
+      tasks: Array.isArray(body?.tasks)
+        ? body.tasks.map((task: unknown) => taskCreateInputSchema.parse(task))
+        : [],
     });
     return NextResponse.json(result);
   } catch (error) {

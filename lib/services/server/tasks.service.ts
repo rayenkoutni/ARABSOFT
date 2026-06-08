@@ -7,11 +7,11 @@ import {
   TaskInputError,
   type TaskCreateInput,
   taskWithRelationsInclude,
+  validateTaskDueDateWithinProjectSchedule,
   validateTaskRequiredSkills,
 } from "@/lib/tasks";
 import { bonusService } from "@/lib/services/server/bonus.service";
 import { notificationServerService } from "@/lib/services/server/notification.service";
-import { validateTaskDueDateForProject } from "@/lib/services/server/projects.service";
 import { apiError } from "@/lib/utils/api-response";
 import { getTodayDateOnly, toDateOnlyValue } from "@/lib/leave-request";
 import { hasProjectReachedPlannedEndDate, isProjectSlaBreached } from "@/lib/project-sla";
@@ -52,6 +52,108 @@ const allowedTransitions: Record<TaskStatusActorRole, Record<string, string[]>> 
     DONE: [],
   },
 };
+
+interface CreateTasksInProjectArgs {
+  db: TaskDbClient
+  user: CurrentUser
+  project: {
+    id: string
+    name: string
+    startDate?: Date | null
+    endDate?: Date | null
+  }
+  tasks: TaskCreateInput[]
+  skipSelfNotification?: boolean
+}
+
+export async function createTasksInProject(
+  args: CreateTasksInProjectArgs
+) {
+  const taskPayloads = await Promise.all(
+    args.tasks.map(async (task) => {
+      const requiredSkills = await validateTaskRequiredSkills(args.db, task.requiredSkills)
+      const dueDate = task.dueDate
+        ? validateTaskDueDateWithinProjectSchedule(task.dueDate, args.project)
+        : null
+
+      return {
+        input: task,
+        requiredSkills,
+        dueDate,
+      }
+    })
+  )
+
+  const createdTasks = []
+
+  for (const taskPayload of taskPayloads) {
+    const createdTask = await args.db.task.create({
+      data: {
+        title: taskPayload.input.title,
+        description: taskPayload.input.description,
+        priority: taskPayload.input.priority,
+        assigneeId: taskPayload.input.assigneeId,
+        projectId: args.project.id,
+        dueDate: taskPayload.dueDate,
+        status: "TODO",
+        requiredSkills: taskPayload.requiredSkills.length > 0
+          ? {
+              create: taskPayload.requiredSkills.map((requiredSkill) => ({
+                skillId: requiredSkill.skillId,
+                minimumLevel: requiredSkill.minimumLevel,
+              })),
+            }
+          : undefined,
+      },
+      include: taskWithRelationsInclude,
+    })
+
+    createdTasks.push(createdTask)
+
+    await args.db.auditLog.create({
+      data: {
+        actorId: args.user.id,
+        actorName: args.user.name,
+        action: "CREATED",
+        entity: "Task",
+        entityId: createdTask.id,
+        details: JSON.stringify({
+          title: createdTask.title,
+          status: createdTask.status,
+          projectId: args.project.id,
+        }),
+      },
+    })
+
+    if (!(args.skipSelfNotification && taskPayload.input.assigneeId === args.user.id)) {
+      await args.db.notification.create({
+        data: {
+          employeeId: taskPayload.input.assigneeId,
+          title: "Nouvelle tache assignee",
+          message: `Une nouvelle tache "${taskPayload.input.title}" vous a ete assignee dans le projet "${args.project.name}".${taskPayload.input.dueDate ? ` Echeance: ${new Date(taskPayload.input.dueDate).toLocaleDateString()}` : ""}`,
+        },
+      })
+    }
+
+    if (taskPayload.input.dueDate) {
+      const dueDateObj = new Date(taskPayload.input.dueDate)
+      const now = new Date()
+      const twoDaysFromNow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000)
+
+      if (dueDateObj <= twoDaysFromNow && dueDateObj > now) {
+        await args.db.notification.create({
+          data: {
+            employeeId: taskPayload.input.assigneeId,
+            title: "Echeance proche",
+            message: `La tache "${taskPayload.input.title}" arrive a echeance le ${dueDateObj.toLocaleDateString()} dans le projet "${args.project.name}"`,
+          },
+        })
+      }
+    }
+  }
+
+  return createdTasks
+}
 
 class TasksService {
   private getManagerProjectScope(userId: string) {
@@ -164,69 +266,16 @@ class TasksService {
       }
     }
 
-    const requiredSkills = await validateTaskRequiredSkills(prisma, input.requiredSkills);
-    const dueDate = input.dueDate ? validateTaskDueDateForProject(input.dueDate, project) : null;
-
     return prisma.$transaction(async (tx) => {
-      const task = await tx.task.create({
-        data: {
-          title: input.title,
-          description: input.description,
-          priority: input.priority,
-          assigneeId: input.assigneeId,
-          projectId,
-          dueDate,
-          status: "TODO",
-          requiredSkills: requiredSkills.length > 0
-            ? {
-                create: requiredSkills.map((requiredSkill) => ({
-                  skillId: requiredSkill.skillId,
-                  minimumLevel: requiredSkill.minimumLevel,
-                })),
-              }
-            : undefined,
-        },
-        include: taskWithRelationsInclude,
-      });
+      const [task] = await createTasksInProject({
+        db: tx,
+        user,
+        project,
+        tasks: [input],
+        skipSelfNotification: true,
+      })
 
-      await tx.auditLog.create({
-        data: {
-          actorId: user.id,
-          actorName: user.name,
-          action: "CREATED",
-          entity: "Task",
-          entityId: task.id,
-          details: JSON.stringify({ title: task.title, status: task.status, projectId }),
-        },
-      });
-
-      if (input.assigneeId !== user.id) {
-        await tx.notification.create({
-          data: {
-            employeeId: input.assigneeId,
-            title: "Nouvelle tache assignee",
-            message: `Une nouvelle tache "${input.title}" vous a ete assignee dans le projet "${project.name}".${input.dueDate ? ` Echeance: ${new Date(input.dueDate).toLocaleDateString()}` : ""}`,
-          },
-        });
-      }
-
-      if (input.dueDate) {
-        const dueDateObj = new Date(input.dueDate);
-        const now = new Date();
-        const twoDaysFromNow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
-
-        if (dueDateObj <= twoDaysFromNow && dueDateObj > now) {
-          await tx.notification.create({
-            data: {
-              employeeId: input.assigneeId,
-              title: "Echeance proche",
-              message: `La tache "${input.title}" arrive a echeance le ${dueDateObj.toLocaleDateString()} dans le projet "${project.name}"`,
-            },
-          });
-        }
-      }
-
-      return task;
+      return task
     });
   }
 
